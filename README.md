@@ -46,3 +46,5 @@ See `CLAUDE.md` for development rules.
 ## Required Unity Version
 
 Unity 6.3 LTS
+
+Do not modify .claude/settings.json without explicit approval.
