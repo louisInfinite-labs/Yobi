@@ -1,0 +1,63 @@
+# Unity generated
+
+[Ll]ibrary/
+
+[Tt]emp/
+
+[Oo]bj/
+
+[Ll]ogs/
+
+[Uu]ser[Ss]ettings/
+
+[Mm]emoryCaptures/
+
+[Rr]ecordings/
+
+# Builds
+
+[Bb]uild/
+
+[Bb]uilds/
+
+# IDE
+
+.vscode/
+
+.idea/
+
+.vs/
+
+*.csproj
+
+*.sln
+
+*.suo
+
+*.user
+
+*.userprefs
+
+*.pidb
+
+*.booproj
+
+# OS
+
+.DS_Store
+
+Thumbs.db
+
+# Crash / debug
+
+sysinfo.txt
+
+*.stackdump
+
+# Secrets / local config
+
+.env
+
+.env.*
+
+secrets.json
