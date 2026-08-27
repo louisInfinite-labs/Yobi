@@ -7,6 +7,7 @@ using Yobi.Application.Models;
 using Yobi.Application.UseCases;
 using Yobi.Domain.Entities;
 using Yobi.Domain.Interfaces;
+using Yobi.Infrastructure.Api.Holodex;
 using Yobi.Infrastructure.Config;
 using Yobi.Infrastructure.Mock;
 using Yobi.Infrastructure.YouTube;
@@ -38,6 +39,11 @@ namespace Yobi.Presentation
         [SerializeField]
         private int mockStreamStartInMinutes = 6;
 
+        [Header("Temporary Debug: Holodex Connectivity")]
+        [Tooltip("Debug-only connectivity check. Remove once Holodex becomes a selectable Data Source alongside Real/Mock.")]
+        [SerializeField]
+        private bool testHolodexConnectionOnStart = false;
+
         private EvaluateLivestreamRemindersUseCase _reminderUseCase;
 
         private void OnValidate()
@@ -47,13 +53,42 @@ namespace Yobi.Presentation
 
         private async void Start()
         {
-            if (!runOnStart)
+            if (runOnStart)
+            {
+                await RunCheckAsync();
+            }
+            else
             {
                 Debug.Log("[YouTube] Auto check is disabled.");
-                return;
             }
 
-            await RunCheckAsync();
+            if (testHolodexConnectionOnStart)
+            {
+                await RunHolodexConnectionTestAsync();
+            }
+        }
+
+        private async System.Threading.Tasks.Task RunHolodexConnectionTestAsync()
+        {
+            try
+            {
+                var configProvider = new LocalFileChannelConfigProvider();
+                var holodexClient = new HolodexApiClient(configProvider.GetHolodexApiKey());
+                var result = await holodexClient.TestConnectionAsync(CancellationToken.None);
+
+                if (result.IsSuccess)
+                {
+                    Debug.Log($"[Holodex] Connection successful. Received {result.ItemCount} item(s).");
+                }
+                else
+                {
+                    Debug.LogError($"[Holodex] Connection failed: {result.ErrorMessage}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[Holodex] Connection test failed: {ex.Message}");
+            }
         }
 
         private async System.Threading.Tasks.Task RunCheckAsync()

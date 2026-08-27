@@ -22,6 +22,11 @@ namespace Yobi.Infrastructure.Config
             return LoadConfig().youtubeApiKey;
         }
 
+        public string GetHolodexApiKey()
+        {
+            return LoadConfig().holodexApiKey;
+        }
+
         public IReadOnlyList<YouTubeChannel> GetChannels()
         {
             var config = LoadConfig();
@@ -61,6 +66,7 @@ namespace Yobi.Infrastructure.Config
         {
             public string youtubeApiKey;
             public ChannelDto[] channels;
+            public string holodexApiKey;
         }
 
         [Serializable]

@@ -17,7 +17,7 @@ namespace Yobi.Infrastructure.Http
                 {
                     if (request.result != UnityWebRequest.Result.Success)
                     {
-                        tcs.SetException(new Exception($"YouTube API request failed: {request.error} ({request.responseCode}) - {request.url}"));
+                        tcs.SetException(new Exception($"HTTP request failed: {request.error} ({request.responseCode}) - {request.url}"));
                     }
                     else
                     {
