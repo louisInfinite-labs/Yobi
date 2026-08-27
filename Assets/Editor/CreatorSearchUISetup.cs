@@ -63,14 +63,26 @@ namespace Yobi.EditorTools
 
         private static void EnsureEventSystem()
         {
-            if (Object.FindObjectOfType<EventSystem>() != null)
+            // Project uses the new Input System exclusively (activeInputHandler = 1),
+            // so a StandaloneInputModule - whether newly created or already present on an
+            // existing EventSystem - would leave the generated uGUI controls unresponsive.
+            var eventSystem = Object.FindObjectOfType<EventSystem>();
+            if (eventSystem == null)
             {
+                new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
                 return;
             }
 
-            // Project uses the new Input System exclusively (activeInputHandler = 1),
-            // so the legacy StandaloneInputModule would leave the UI unresponsive.
-            new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
+            var legacyModule = eventSystem.GetComponent<StandaloneInputModule>();
+            if (legacyModule != null)
+            {
+                Object.DestroyImmediate(legacyModule);
+            }
+
+            if (eventSystem.GetComponent<InputSystemUIInputModule>() == null)
+            {
+                eventSystem.gameObject.AddComponent<InputSystemUIInputModule>();
+            }
         }
 
         private static GameObject CreatePanel(Transform parent)

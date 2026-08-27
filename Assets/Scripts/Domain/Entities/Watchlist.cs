@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 
 namespace Yobi.Domain.Entities
 {
@@ -6,8 +7,14 @@ namespace Yobi.Domain.Entities
     {
         private readonly List<WatchedCreator> _items = new List<WatchedCreator>();
         private readonly HashSet<string> _channelIds = new HashSet<string>();
+        private readonly ReadOnlyCollection<WatchedCreator> _itemsReadOnly;
 
-        public IReadOnlyList<WatchedCreator> Items => _items;
+        public Watchlist()
+        {
+            _itemsReadOnly = _items.AsReadOnly();
+        }
+
+        public IReadOnlyList<WatchedCreator> Items => _itemsReadOnly;
 
         public bool TryAdd(WatchedCreator creator)
         {

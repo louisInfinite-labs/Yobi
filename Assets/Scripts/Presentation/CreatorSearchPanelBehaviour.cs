@@ -47,11 +47,6 @@ namespace Yobi.Presentation
                 Debug.LogError("[CreatorSearchPanel] Required UI references are not assigned. Run Tools > Yobi > Setup Creator Search UI.");
             }
 
-            var configProvider = new LocalFileChannelConfigProvider();
-            var holodexClient = new HolodexApiClient(configProvider.GetHolodexApiKey());
-            _searchCreatorsUseCase = new SearchCreatorsUseCase(holodexClient);
-            _watchlistUseCase = new ManageWatchlistUseCase();
-
             if (resultRowTemplate != null)
             {
                 resultRowTemplate.SetActive(false);
@@ -60,6 +55,22 @@ namespace Yobi.Presentation
             if (watchlistRowTemplate != null)
             {
                 watchlistRowTemplate.SetActive(false);
+            }
+
+            _watchlistUseCase = new ManageWatchlistUseCase();
+
+            try
+            {
+                var configProvider = new LocalFileChannelConfigProvider();
+                var holodexClient = new HolodexApiClient(configProvider.GetHolodexApiKey());
+                _searchCreatorsUseCase = new SearchCreatorsUseCase(holodexClient);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[CreatorSearchPanel] Failed to load Holodex configuration: {ex.Message}");
+                SetStatus("Search unavailable: configuration error.");
+                SetSearchInteractable(false);
+                return;
             }
 
             if (searchButton != null)
