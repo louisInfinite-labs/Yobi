@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
@@ -10,7 +11,7 @@ using Yobi.Infrastructure.Http;
 
 namespace Yobi.Infrastructure.Api.Holodex
 {
-    public sealed class HolodexApiClient : ICreatorSearchProvider
+    public sealed class HolodexApiClient : ICreatorSearchProvider, ICreatorLivestreamStatusProvider
     {
         private const string BaseUrl = "https://holodex.net/api/v2";
 
@@ -21,7 +22,7 @@ namespace Yobi.Infrastructure.Api.Holodex
             _apiKey = apiKey;
         }
 
-        public async Task<HolodexConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken)
+        public async Task<ConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken)
         {
             try
             {
@@ -34,11 +35,11 @@ namespace Yobi.Infrastructure.Api.Holodex
 
                 var wrapped = JsonUtility.FromJson<VideoListWrapperDto>("{\"items\":" + json + "}");
                 var itemCount = wrapped?.items?.Length ?? 0;
-                return HolodexConnectionTestResult.Success(itemCount);
+                return ConnectionTestResult.Success(itemCount);
             }
             catch (Exception ex)
             {
-                return HolodexConnectionTestResult.Failure(ex.Message);
+                return ConnectionTestResult.Failure(ex.Message);
             }
         }
 
@@ -71,6 +72,59 @@ namespace Yobi.Infrastructure.Api.Holodex
             return results;
         }
 
+        public async Task<CreatorLivestreamSnapshot> GetStatusAsync(string channelId, CancellationToken cancellationToken)
+        {
+            var url = $"{BaseUrl}/videos?channel_id={UnityWebRequest.EscapeURL(channelId)}&type=stream&status=live,upcoming&include=live_info&limit=10";
+            using var request = UnityWebRequest.Get(url);
+            request.SetRequestHeader("X-APIKEY", _apiKey);
+
+            var json = await UnityWebRequestAsync.SendAsync(request);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var wrapped = JsonUtility.FromJson<HolodexVideoListWrapperDto>("{\"items\":" + json + "}");
+
+            LivestreamInfo currentLivestream = null;
+            var upcoming = new List<LivestreamInfo>();
+            var now = DateTime.UtcNow;
+            var windowEnd = now.AddHours(24);
+
+            if (wrapped?.items != null)
+            {
+                foreach (var item in wrapped.items)
+                {
+                    if (string.IsNullOrEmpty(item.id))
+                    {
+                        continue;
+                    }
+
+                    var scheduledStartUtc = default(DateTime);
+                    if (!string.IsNullOrEmpty(item.start_scheduled))
+                    {
+                        DateTime.TryParse(
+                            item.start_scheduled,
+                            CultureInfo.InvariantCulture,
+                            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                            out scheduledStartUtc);
+                    }
+
+                    var channelName = item.channel?.name ?? string.Empty;
+                    var livestream = new LivestreamInfo(channelName, item.title ?? string.Empty, scheduledStartUtc, item.id);
+
+                    if (item.status == "live")
+                    {
+                        currentLivestream = livestream;
+                    }
+                    else if (item.status == "upcoming" && scheduledStartUtc > now && scheduledStartUtc <= windowEnd)
+                    {
+                        upcoming.Add(livestream);
+                    }
+                }
+            }
+
+            upcoming.Sort((a, b) => a.ScheduledStartUtc.CompareTo(b.ScheduledStartUtc));
+            return new CreatorLivestreamSnapshot(currentLivestream, upcoming);
+        }
+
         [Serializable]
         private sealed class VideoListWrapperDto
         {
@@ -96,23 +150,32 @@ namespace Yobi.Infrastructure.Api.Holodex
             public string value;
             public string text;
         }
-    }
 
-    public readonly struct HolodexConnectionTestResult
-    {
-        public bool IsSuccess { get; }
-        public int ItemCount { get; }
-        public string ErrorMessage { get; }
-
-        private HolodexConnectionTestResult(bool isSuccess, int itemCount, string errorMessage)
+        [Serializable]
+        private sealed class HolodexVideoListWrapperDto
         {
-            IsSuccess = isSuccess;
-            ItemCount = itemCount;
-            ErrorMessage = errorMessage;
+            public HolodexVideoDto[] items;
         }
 
-        public static HolodexConnectionTestResult Success(int itemCount) => new HolodexConnectionTestResult(true, itemCount, null);
+        [Serializable]
+        private sealed class HolodexVideoDto
+        {
+            public string id;
+            public string title;
+            public string status;
 
-        public static HolodexConnectionTestResult Failure(string errorMessage) => new HolodexConnectionTestResult(false, 0, errorMessage);
+            // Field name intentionally mirrors Holodex's wire format (snake_case) so
+            // JsonUtility, which matches JSON keys to field names verbatim, can bind it.
+            public string start_scheduled;
+
+            public HolodexVideoChannelDto channel;
+        }
+
+        [Serializable]
+        private sealed class HolodexVideoChannelDto
+        {
+            public string id;
+            public string name;
+        }
     }
 }

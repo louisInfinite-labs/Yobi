@@ -1,8 +1,11 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
+using Yobi.Application.Models;
 using Yobi.Application.UseCases;
 using Yobi.Domain.Entities;
 using Yobi.Infrastructure.Api.Holodex;
@@ -12,11 +15,16 @@ namespace Yobi.Presentation
 {
     public sealed class CreatorSearchPanelBehaviour : MonoBehaviour
     {
+        private const float ReminderCheckIntervalSeconds = 5f;
+
         [SerializeField]
         private InputField searchInputField;
 
         [SerializeField]
         private Button searchButton;
+
+        [SerializeField]
+        private Button refreshStatusButton;
 
         [SerializeField]
         private Text statusText;
@@ -33,15 +41,44 @@ namespace Yobi.Presentation
         [SerializeField]
         private GameObject watchlistRowTemplate;
 
+        [SerializeField]
+        private ReminderSettings reminderSettings;
+
+        [Header("Holodex Polling")]
+        [SerializeField]
+        private bool enablePolling = true;
+
+        [SerializeField]
+        private int pollingIntervalInMinutes = 5;
+
         private SearchCreatorsUseCase _searchCreatorsUseCase;
         private ManageWatchlistUseCase _watchlistUseCase;
+        private GetCreatorStatusUseCase _creatorStatusUseCase;
+        private EvaluateLivestreamRemindersUseCase _reminderUseCase;
+
+        private bool _isConfigured;
+        private bool _isRefreshing;
+        private CancellationTokenSource _pollingCts;
+
+        // Updated only by a completed refresh; read every few seconds by ReminderCheckLoop.
+        // This is what keeps reminder timing local and decoupled from how often we actually
+        // poll Holodex - the reminder check never itself performs a network call.
+        private IReadOnlyList<ChannelLivestreamResult> _latestReminderSnapshot = new List<ChannelLivestreamResult>();
 
         private readonly List<GameObject> _activeResultRows = new List<GameObject>();
         private readonly List<GameObject> _activeWatchlistRows = new List<GameObject>();
 
+        private void OnValidate()
+        {
+            if (pollingIntervalInMinutes < 1)
+            {
+                pollingIntervalInMinutes = 1;
+            }
+        }
+
         private void Awake()
         {
-            if (searchInputField == null || searchButton == null || resultsContainer == null ||
+            if (searchInputField == null || searchButton == null || refreshStatusButton == null || resultsContainer == null ||
                 resultRowTemplate == null || watchlistContainer == null || watchlistRowTemplate == null)
             {
                 Debug.LogError("[CreatorSearchPanel] Required UI references are not assigned. Run Tools > Yobi > Setup Creator Search UI.");
@@ -58,12 +95,15 @@ namespace Yobi.Presentation
             }
 
             _watchlistUseCase = new ManageWatchlistUseCase();
+            _reminderUseCase = new EvaluateLivestreamRemindersUseCase();
 
             try
             {
                 var configProvider = new LocalFileChannelConfigProvider();
                 var holodexClient = new HolodexApiClient(configProvider.GetHolodexApiKey());
                 _searchCreatorsUseCase = new SearchCreatorsUseCase(holodexClient);
+                _creatorStatusUseCase = new GetCreatorStatusUseCase(holodexClient);
+                _isConfigured = true;
             }
             catch (Exception ex)
             {
@@ -76,6 +116,49 @@ namespace Yobi.Presentation
             if (searchButton != null)
             {
                 searchButton.onClick.AddListener(OnSearchButtonClicked);
+            }
+
+            if (refreshStatusButton != null)
+            {
+                refreshStatusButton.onClick.AddListener(OnRefreshButtonClicked);
+            }
+        }
+
+        private void Start()
+        {
+            // Reminder checking runs on its own frequent, purely-local cadence regardless of
+            // whether polling is enabled or how coarse its interval is.
+            StartCoroutine(ReminderCheckLoop());
+
+            if (_isConfigured && enablePolling)
+            {
+                _pollingCts = new CancellationTokenSource();
+                RunPollingLoop(_pollingCts.Token);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            _pollingCts?.Cancel();
+            _pollingCts?.Dispose();
+        }
+
+        // App start -> immediate refresh -> wait configured interval -> refresh again -> repeat.
+        private async void RunPollingLoop(CancellationToken cancellationToken)
+        {
+            try
+            {
+                while (!cancellationToken.IsCancellationRequested)
+                {
+                    await RefreshWatchlistStatusAsync(cancellationToken);
+
+                    var intervalMinutes = Mathf.Max(1, pollingIntervalInMinutes);
+                    await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), cancellationToken);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected when the panel is destroyed/torn down mid-wait.
             }
         }
 
@@ -132,13 +215,22 @@ namespace Yobi.Presentation
             var row = Instantiate(resultRowTemplate, resultsContainer);
             row.SetActive(true);
 
-            var nameText = row.transform.Find("NameText")?.GetComponent<Text>();
+            var nameText = row.transform.Find("HeaderRow/NameText")?.GetComponent<Text>();
             if (nameText != null)
             {
                 nameText.text = $"{result.DisplayName}  ({result.ChannelId})";
             }
 
-            var addButton = row.transform.Find("AddButton")?.GetComponent<Button>();
+            var resultStatusText = row.transform.Find("StatusText")?.GetComponent<Text>();
+
+            var checkStatusButton = row.transform.Find("HeaderRow/CheckStatusButton")?.GetComponent<Button>();
+            if (checkStatusButton != null)
+            {
+                checkStatusButton.onClick.RemoveAllListeners();
+                checkStatusButton.onClick.AddListener(() => OnCheckResultStatusClicked(result, checkStatusButton, resultStatusText));
+            }
+
+            var addButton = row.transform.Find("HeaderRow/AddButton")?.GetComponent<Button>();
             if (addButton != null)
             {
                 addButton.onClick.RemoveAllListeners();
@@ -148,7 +240,59 @@ namespace Yobi.Presentation
             _activeResultRows.Add(row);
         }
 
-        private void OnAddButtonClicked(CreatorSearchResult result)
+        // Status lookup works for ANY channel identity, regardless of watchlist membership -
+        // this is the same use case the watchlist refresh below uses, just for a single
+        // not-yet-added search result instead of the whole watchlist.
+        private async void OnCheckResultStatusClicked(CreatorSearchResult result, Button checkStatusButton, Text resultStatusText)
+        {
+            if (checkStatusButton != null)
+            {
+                checkStatusButton.interactable = false;
+            }
+
+            try
+            {
+                var identity = new ChannelIdentity(result.ChannelId, result.DisplayName);
+                var isWatchlisted = IsChannelWatchlisted(result.ChannelId);
+                var status = await _creatorStatusUseCase.GetStatusAsync(identity, isWatchlisted, CancellationToken.None);
+
+                if (resultStatusText != null)
+                {
+                    resultStatusText.text = FormatCreatorStatus(status);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (resultStatusText != null)
+                {
+                    resultStatusText.text = "Status check failed.";
+                }
+
+                Debug.LogError($"[Holodex] Failed to check creator status: {ex.Message}");
+            }
+            finally
+            {
+                if (checkStatusButton != null)
+                {
+                    checkStatusButton.interactable = true;
+                }
+            }
+        }
+
+        private bool IsChannelWatchlisted(string channelId)
+        {
+            foreach (var creator in _watchlistUseCase.GetAll())
+            {
+                if (creator.ChannelId == channelId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private async void OnAddButtonClicked(CreatorSearchResult result)
         {
             var addResult = _watchlistUseCase.Add(result.ChannelId, result.DisplayName);
             if (addResult == WatchlistAddResult.AlreadyExists)
@@ -158,10 +302,62 @@ namespace Yobi.Presentation
             }
 
             SetStatus(string.Empty);
-            RefreshWatchlistUI();
+            await RefreshWatchlistStatusAsync();
         }
 
-        private void RefreshWatchlistUI()
+        private async void OnRefreshButtonClicked()
+        {
+            await RefreshWatchlistStatusAsync();
+        }
+
+        private async Task RefreshWatchlistStatusAsync(CancellationToken cancellationToken = default)
+        {
+            if (_isRefreshing)
+            {
+                return;
+            }
+
+            _isRefreshing = true;
+            SetRefreshInteractable(false);
+
+            try
+            {
+                var watched = _watchlistUseCase.GetAll();
+                var identities = new List<ChannelIdentity>(watched.Count);
+                foreach (var creator in watched)
+                {
+                    identities.Add(new ChannelIdentity(creator.ChannelId, creator.DisplayName));
+                }
+
+                var statuses = await _creatorStatusUseCase.GetStatusesAsync(identities, isWatchlisted: true, cancellationToken);
+
+                RenderWatchlistRows(statuses);
+                _latestReminderSnapshot = BuildChannelLivestreamResults(statuses);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[Holodex] Failed to refresh watchlist status: {ex.Message}");
+            }
+            finally
+            {
+                _isRefreshing = false;
+                SetRefreshInteractable(true);
+            }
+        }
+
+        private void SetRefreshInteractable(bool interactable)
+        {
+            if (refreshStatusButton != null)
+            {
+                refreshStatusButton.interactable = interactable;
+            }
+        }
+
+        private void RenderWatchlistRows(IReadOnlyList<CreatorStatus> statuses)
         {
             ClearWatchlistRows();
 
@@ -170,7 +366,7 @@ namespace Yobi.Presentation
                 return;
             }
 
-            foreach (var creator in _watchlistUseCase.GetAll())
+            foreach (var status in statuses)
             {
                 var row = Instantiate(watchlistRowTemplate, watchlistContainer);
                 row.SetActive(true);
@@ -178,11 +374,97 @@ namespace Yobi.Presentation
                 var nameText = row.transform.Find("NameText")?.GetComponent<Text>();
                 if (nameText != null)
                 {
-                    nameText.text = creator.DisplayName;
+                    nameText.text = FormatCreatorStatus(status);
                 }
 
                 _activeWatchlistRows.Add(row);
             }
+        }
+
+        // Shared by both Search Results (single, not-yet-added creator) and the Watchlist
+        // (bulk, already-added creators) so the display format never diverges between paths.
+        private static string FormatCreatorStatus(CreatorStatus status)
+        {
+            var lines = new List<string>
+            {
+                status.ChannelName,
+                status.ChannelUrl,
+                $"Watchlisted: {(status.IsWatchlisted ? "Yes" : "No")}",
+                $"Status: {status.LiveStatus.ToString().ToUpperInvariant()}",
+            };
+
+            if (status.LiveStatus == CreatorLiveStatus.Live && status.CurrentLivestream != null)
+            {
+                lines.Add($"Live: {status.CurrentLivestream.Title}");
+                lines.Add($"URL: {status.CurrentLivestream.Url}");
+            }
+            else if (status.LiveStatus == CreatorLiveStatus.Upcoming)
+            {
+                foreach (var upcoming in status.UpcomingLivestreams)
+                {
+                    var localStart = upcoming.ScheduledStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+                    lines.Add($"Upcoming: {upcoming.Title} @ {localStart}");
+                    lines.Add($"URL: {upcoming.Url}");
+                }
+            }
+
+            return string.Join("\n", lines);
+        }
+
+        private static List<ChannelLivestreamResult> BuildChannelLivestreamResults(IReadOnlyList<CreatorStatus> statuses)
+        {
+            var channelResults = new List<ChannelLivestreamResult>();
+            foreach (var status in statuses)
+            {
+                if (status.UpcomingLivestreams.Count == 0)
+                {
+                    continue;
+                }
+
+                var identity = new ChannelIdentity(status.ChannelId, status.ChannelName);
+                channelResults.Add(new ChannelLivestreamResult(identity, status.UpcomingLivestreams));
+            }
+
+            return channelResults;
+        }
+
+        // Ticks locally every few seconds, independent of the (much coarser) Holodex polling
+        // interval - it only ever compares "now" against the most recently fetched snapshot,
+        // never makes a network call itself.
+        private IEnumerator ReminderCheckLoop()
+        {
+            while (true)
+            {
+                EvaluateReminders();
+                yield return new WaitForSeconds(ReminderCheckIntervalSeconds);
+            }
+        }
+
+        private void EvaluateReminders()
+        {
+            if (reminderSettings == null || _latestReminderSnapshot.Count == 0)
+            {
+                return;
+            }
+
+            var thresholds = reminderSettings.BuildThresholds();
+            if (thresholds.Count == 0)
+            {
+                return;
+            }
+
+            var dueEvents = _reminderUseCase.Evaluate(_latestReminderSnapshot, thresholds, DateTime.UtcNow);
+            foreach (var reminderEvent in dueEvents)
+            {
+                LogReminder(reminderEvent);
+            }
+        }
+
+        private static void LogReminder(LivestreamReminderEvent reminderEvent)
+        {
+            var localStart = reminderEvent.ScheduledStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+            var leadMinutes = (int)reminderEvent.Threshold.LeadTime.TotalMinutes;
+            Debug.Log($"[Reminder]\nChannel: {reminderEvent.ChannelName}\nTitle: {reminderEvent.Title}\n{reminderEvent.Threshold.Label}: {leadMinutes} minutes before start\nScheduled Start: {localStart}\nVideo ID: {reminderEvent.VideoId}");
         }
 
         private void ClearResultRows()

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Yobi.Application.Models;
+using Yobi.Domain.Entities;
 using Yobi.Domain.Interfaces;
 
 namespace Yobi.Application.UseCases
@@ -35,7 +36,7 @@ namespace Yobi.Application.UseCases
                     .Where(l => l.ScheduledStartUtc >= now && l.ScheduledStartUtc <= windowEnd)
                     .OrderBy(l => l.ScheduledStartUtc)
                     .ToList();
-                results.Add(new ChannelLivestreamResult(channel, withinWindow));
+                results.Add(new ChannelLivestreamResult(new ChannelIdentity(channel.ChannelId, channel.Name), withinWindow));
             }
 
             return results;
