@@ -295,7 +295,7 @@ namespace Yobi.Presentation
 
         private async void OnAddButtonClicked(CreatorSearchResult result)
         {
-            var addResult = _watchlistUseCase.Add(result.ChannelId, result.DisplayName);
+            var addResult = _watchlistUseCase.Add(result.ChannelId, result.DisplayName, result.ChannelUrl);
             if (addResult == WatchlistAddResult.AlreadyExists)
             {
                 SetStatus("Already added");
@@ -405,6 +405,13 @@ namespace Yobi.Presentation
                 $"Watchlisted: {(status.IsWatchlisted ? "Yes" : "No")}",
                 $"Status: {status.LiveStatus.ToString().ToUpperInvariant()}",
             };
+
+            // Only known when the same livestream call happened to return it (i.e. there was at
+            // least one live/upcoming video); not chased down with an extra API call otherwise.
+            if (!string.IsNullOrEmpty(status.Studio))
+            {
+                lines.Add($"Studio: {status.Studio}");
+            }
 
             if (status.LiveStatus == CreatorLiveStatus.Live && status.CurrentLivestream != null)
             {

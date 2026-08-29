@@ -24,6 +24,7 @@ namespace Yobi.Application.UseCases
                 channel.ChannelId,
                 channel.Name,
                 channelUrl,
+                snapshot.Studio,
                 isWatchlisted,
                 snapshot.LiveStatus,
                 snapshot.CurrentLivestream,

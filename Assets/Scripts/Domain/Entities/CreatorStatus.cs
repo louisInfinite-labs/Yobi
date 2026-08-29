@@ -8,6 +8,7 @@ namespace Yobi.Domain.Entities
         public string ChannelId { get; }
         public string ChannelName { get; }
         public string ChannelUrl { get; }
+        public string Studio { get; }
         public bool IsWatchlisted { get; }
         public CreatorLiveStatus LiveStatus { get; }
         public LivestreamInfo CurrentLivestream { get; }
@@ -17,6 +18,7 @@ namespace Yobi.Domain.Entities
             string channelId,
             string channelName,
             string channelUrl,
+            string studio,
             bool isWatchlisted,
             CreatorLiveStatus liveStatus,
             LivestreamInfo currentLivestream,
@@ -25,6 +27,7 @@ namespace Yobi.Domain.Entities
             ChannelId = channelId;
             ChannelName = channelName;
             ChannelUrl = channelUrl;
+            Studio = studio;
             IsWatchlisted = isWatchlisted;
             LiveStatus = liveStatus;
             CurrentLivestream = currentLivestream;
