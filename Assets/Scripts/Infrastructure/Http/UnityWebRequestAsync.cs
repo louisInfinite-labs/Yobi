@@ -9,18 +9,12 @@ namespace Yobi.Infrastructure.Http
     {
         public static Task<string> SendAsync(UnityWebRequest request, CancellationToken cancellationToken)
         {
-            if (cancellationToken.IsCancellationRequested)
-            {
-                // Don't dispatch the request at all for a token that's already canceled -
-                // starting it first and aborting a moment later would still consume API quota
-                // for a call the caller no longer wants.
-                request.Dispose();
-                return Task.FromCanceled<string>(cancellationToken);
-            }
-
             var tcs = new TaskCompletionSource<string>();
-            var operation = request.SendWebRequest();
 
+            // Register before dispatching: if the token is (or becomes) canceled anywhere
+            // between here and SendWebRequest below, the cancellation check right after
+            // registration catches it and skips dispatch entirely, instead of leaving a gap
+            // where cancellation during that window fails to abort anything.
             var registration = cancellationToken.CanBeCanceled
                 ? cancellationToken.Register(() =>
                 {
@@ -30,6 +24,25 @@ namespace Yobi.Infrastructure.Http
                     }
                 })
                 : default;
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                registration.Dispose();
+                request.Dispose();
+                tcs.TrySetCanceled(cancellationToken);
+                return tcs.Task;
+            }
+
+            UnityWebRequestAsyncOperation operation;
+            try
+            {
+                operation = request.SendWebRequest();
+            }
+            catch
+            {
+                registration.Dispose();
+                throw;
+            }
 
             operation.completed += _ =>
             {
