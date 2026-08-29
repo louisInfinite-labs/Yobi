@@ -4,11 +4,13 @@ namespace Yobi.Domain.Entities
     {
         public string ChannelId { get; }
         public string DisplayName { get; }
+        public string ChannelUrl { get; }
 
-        public CreatorSearchResult(string channelId, string displayName)
+        public CreatorSearchResult(string channelId, string displayName, string channelUrl)
         {
             ChannelId = channelId;
             DisplayName = displayName;
+            ChannelUrl = channelUrl;
         }
     }
 }

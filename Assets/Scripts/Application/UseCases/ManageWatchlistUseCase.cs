@@ -13,9 +13,9 @@ namespace Yobi.Application.UseCases
     {
         private readonly Watchlist _watchlist = new Watchlist();
 
-        public WatchlistAddResult Add(string channelId, string displayName)
+        public WatchlistAddResult Add(string channelId, string displayName, string channelUrl)
         {
-            var added = _watchlist.TryAdd(new WatchedCreator(channelId, displayName));
+            var added = _watchlist.TryAdd(new WatchedCreator(channelId, displayName, channelUrl));
             return added ? WatchlistAddResult.Added : WatchlistAddResult.AlreadyExists;
         }
 

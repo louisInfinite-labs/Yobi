@@ -30,12 +30,16 @@ namespace Yobi.Infrastructure.Api.Holodex
                 using var request = UnityWebRequest.Get(url);
                 request.SetRequestHeader("X-APIKEY", _apiKey);
 
-                var json = await UnityWebRequestAsync.SendAsync(request);
+                var json = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var wrapped = JsonUtility.FromJson<VideoListWrapperDto>("{\"items\":" + json + "}");
                 var itemCount = wrapped?.items?.Length ?? 0;
                 return ConnectionTestResult.Success(itemCount);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -49,7 +53,7 @@ namespace Yobi.Infrastructure.Api.Holodex
             using var request = UnityWebRequest.Get(url);
             request.SetRequestHeader("X-APIKEY", _apiKey);
 
-            var json = await UnityWebRequestAsync.SendAsync(request);
+            var json = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             var wrapped = JsonUtility.FromJson<AutocompleteWrapperDto>("{\"items\":" + json + "}");
@@ -66,7 +70,8 @@ namespace Yobi.Infrastructure.Api.Holodex
                     continue;
                 }
 
-                results.Add(new CreatorSearchResult(item.value, item.text));
+                var channelUrl = $"https://www.youtube.com/channel/{item.value}";
+                results.Add(new CreatorSearchResult(item.value, item.text, channelUrl));
             }
 
             return results;
@@ -78,13 +83,14 @@ namespace Yobi.Infrastructure.Api.Holodex
             using var request = UnityWebRequest.Get(url);
             request.SetRequestHeader("X-APIKEY", _apiKey);
 
-            var json = await UnityWebRequestAsync.SendAsync(request);
+            var json = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             var wrapped = JsonUtility.FromJson<HolodexVideoListWrapperDto>("{\"items\":" + json + "}");
 
             LivestreamInfo currentLivestream = null;
             var upcoming = new List<LivestreamInfo>();
+            string studio = null;
             var now = DateTime.UtcNow;
             var windowEnd = now.AddHours(24);
 
@@ -110,6 +116,14 @@ namespace Yobi.Infrastructure.Api.Holodex
                     var channelName = item.channel?.name ?? string.Empty;
                     var livestream = new LivestreamInfo(channelName, item.title ?? string.Empty, scheduledStartUtc, item.id);
 
+                    // This same call's nested "channel" object happens to carry "org" - reuse it
+                    // rather than making a dedicated /channels/{id} request. If nothing here has
+                    // it (e.g. no live/upcoming video at all), Studio just stays null.
+                    if (string.IsNullOrEmpty(studio) && !string.IsNullOrEmpty(item.channel?.org))
+                    {
+                        studio = item.channel.org;
+                    }
+
                     if (item.status == "live")
                     {
                         currentLivestream = livestream;
@@ -122,7 +136,7 @@ namespace Yobi.Infrastructure.Api.Holodex
             }
 
             upcoming.Sort((a, b) => a.ScheduledStartUtc.CompareTo(b.ScheduledStartUtc));
-            return new CreatorLivestreamSnapshot(currentLivestream, upcoming);
+            return new CreatorLivestreamSnapshot(currentLivestream, upcoming, studio);
         }
 
         [Serializable]
@@ -176,6 +190,7 @@ namespace Yobi.Infrastructure.Api.Holodex
         {
             public string id;
             public string name;
+            public string org;
         }
     }
 }

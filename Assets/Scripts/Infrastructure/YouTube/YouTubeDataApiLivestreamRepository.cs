@@ -52,12 +52,16 @@ namespace Yobi.Infrastructure.YouTube
             {
                 var url = $"{BaseUrl}/videos?part=id&chart=mostPopular&maxResults=1&key={_apiKey}";
                 using var request = UnityWebRequest.Get(url);
-                var json = await UnityWebRequestAsync.SendAsync(request);
+                var json = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
 
                 var response = JsonUtility.FromJson<VideoListResponseDto>(json);
                 var itemCount = response?.items?.Length ?? 0;
                 return ConnectionTestResult.Success(itemCount);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
             }
             catch (Exception ex)
             {
@@ -69,7 +73,7 @@ namespace Yobi.Infrastructure.YouTube
         {
             var url = $"{BaseUrl}/channels?part=id&forHandle={UnityWebRequest.EscapeURL(handle)}&key={_apiKey}";
             using var request = UnityWebRequest.Get(url);
-            var json = await UnityWebRequestAsync.SendAsync(request);
+            var json = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             var response = JsonUtility.FromJson<ChannelListResponseDto>(json);
@@ -80,7 +84,7 @@ namespace Yobi.Infrastructure.YouTube
         {
             var url = $"{BaseUrl}/search?part=snippet&channelId={channelId}&eventType=upcoming&type=video&order=date&key={_apiKey}";
             using var request = UnityWebRequest.Get(url);
-            var json = await UnityWebRequestAsync.SendAsync(request);
+            var json = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             var response = JsonUtility.FromJson<SearchListResponseDto>(json);
@@ -99,7 +103,7 @@ namespace Yobi.Infrastructure.YouTube
         {
             var url = $"{BaseUrl}/videos?part=snippet,liveStreamingDetails&id={string.Join(",", videoIds)}&key={_apiKey}";
             using var request = UnityWebRequest.Get(url);
-            var json = await UnityWebRequestAsync.SendAsync(request);
+            var json = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
             var response = JsonUtility.FromJson<VideoListResponseDto>(json);
