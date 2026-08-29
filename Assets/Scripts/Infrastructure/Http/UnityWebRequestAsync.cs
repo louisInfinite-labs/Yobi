@@ -9,6 +9,15 @@ namespace Yobi.Infrastructure.Http
     {
         public static Task<string> SendAsync(UnityWebRequest request, CancellationToken cancellationToken)
         {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                // Don't dispatch the request at all for a token that's already canceled -
+                // starting it first and aborting a moment later would still consume API quota
+                // for a call the caller no longer wants.
+                request.Dispose();
+                return Task.FromCanceled<string>(cancellationToken);
+            }
+
             var tcs = new TaskCompletionSource<string>();
             var operation = request.SendWebRequest();
 
