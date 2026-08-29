@@ -43,6 +43,28 @@ namespace Yobi.Infrastructure.YouTube
             return await GetLivestreamDetailsAsync(channel.Name, videoIds, cancellationToken);
         }
 
+        // Cheapest authenticated call available (1 quota unit, no configured channel required) -
+        // used purely to verify the API key is still valid, mirroring HolodexApiClient's
+        // TestConnectionAsync.
+        public async Task<ConnectionTestResult> TestConnectionAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                var url = $"{BaseUrl}/videos?part=id&chart=mostPopular&maxResults=1&key={_apiKey}";
+                using var request = UnityWebRequest.Get(url);
+                var json = await UnityWebRequestAsync.SendAsync(request);
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var response = JsonUtility.FromJson<VideoListResponseDto>(json);
+                var itemCount = response?.items?.Length ?? 0;
+                return ConnectionTestResult.Success(itemCount);
+            }
+            catch (Exception ex)
+            {
+                return ConnectionTestResult.Failure(ex.Message);
+            }
+        }
+
         private async Task<string> ResolveChannelIdAsync(string handle, CancellationToken cancellationToken)
         {
             var url = $"{BaseUrl}/channels?part=id&forHandle={UnityWebRequest.EscapeURL(handle)}&key={_apiKey}";

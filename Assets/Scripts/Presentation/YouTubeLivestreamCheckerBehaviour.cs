@@ -25,16 +25,7 @@ namespace Yobi.Presentation
         private LivestreamDataSourceMode dataSource = LivestreamDataSourceMode.Real;
 
         [SerializeField]
-        private bool enableReminder1 = true;
-
-        [SerializeField]
-        private int reminder1LeadTimeInMinutes = 30;
-
-        [SerializeField]
-        private bool enableReminder2 = true;
-
-        [SerializeField]
-        private int reminder2LeadTimeInMinutes = 15;
+        private ReminderSettings reminderSettings;
 
         [SerializeField]
         private int mockStreamStartInMinutes = 6;
@@ -44,12 +35,12 @@ namespace Yobi.Presentation
         [SerializeField]
         private bool testHolodexConnectionOnStart = false;
 
-        private EvaluateLivestreamRemindersUseCase _reminderUseCase;
+        [Header("Temporary Debug: YouTube Connectivity")]
+        [Tooltip("Debug-only connectivity/API-key check. Confirms the configured YouTube API key is still valid (not expired/revoked).")]
+        [SerializeField]
+        private bool testYouTubeConnectionOnStart = false;
 
-        private void OnValidate()
-        {
-            NormalizeReminderSettings();
-        }
+        private EvaluateLivestreamRemindersUseCase _reminderUseCase;
 
         private async void Start()
         {
@@ -65,6 +56,11 @@ namespace Yobi.Presentation
             if (testHolodexConnectionOnStart)
             {
                 await RunHolodexConnectionTestAsync();
+            }
+
+            if (testYouTubeConnectionOnStart)
+            {
+                await RunYouTubeConnectionTestAsync();
             }
         }
 
@@ -91,18 +87,33 @@ namespace Yobi.Presentation
             }
         }
 
+        private async System.Threading.Tasks.Task RunYouTubeConnectionTestAsync()
+        {
+            try
+            {
+                var configProvider = new LocalFileChannelConfigProvider();
+                var repository = new YouTubeDataApiLivestreamRepository(configProvider.GetApiKey());
+                var result = await repository.TestConnectionAsync(CancellationToken.None);
+
+                if (result.IsSuccess)
+                {
+                    Debug.Log($"[YouTube] Connection successful. Received {result.ItemCount} item(s).");
+                }
+                else
+                {
+                    Debug.LogError($"[YouTube] Connection failed: {result.ErrorMessage}");
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogError($"[YouTube] Connection test failed: {ex.Message}");
+            }
+        }
+
         private async System.Threading.Tasks.Task RunCheckAsync()
         {
             try
             {
-                var beforeReminder1 = reminder1LeadTimeInMinutes;
-                var beforeReminder2 = reminder2LeadTimeInMinutes;
-                NormalizeReminderSettings();
-                if (beforeReminder1 != reminder1LeadTimeInMinutes || beforeReminder2 != reminder2LeadTimeInMinutes)
-                {
-                    Debug.LogWarning($"[YouTube] Reminder settings were invalid and have been corrected. Reminder 1 = {reminder1LeadTimeInMinutes} min, Reminder 2 = {reminder2LeadTimeInMinutes} min.");
-                }
-
                 var configProvider = new LocalFileChannelConfigProvider();
                 IYouTubeLivestreamRepository repository = dataSource == LivestreamDataSourceMode.Mock
                     ? new MockYouTubeLivestreamRepository(TimeSpan.FromMinutes(mockStreamStartInMinutes))
@@ -126,7 +137,7 @@ namespace Yobi.Presentation
                     }
                 }
 
-                var thresholds = BuildReminderThresholds();
+                var thresholds = reminderSettings != null ? reminderSettings.BuildThresholds() : new List<ReminderThreshold>();
                 if (thresholds.Count > 0)
                 {
                     _reminderUseCase = new EvaluateLivestreamRemindersUseCase();
@@ -136,43 +147,6 @@ namespace Yobi.Presentation
             catch (System.Exception ex)
             {
                 Debug.LogError($"[YouTube] Failed to check upcoming livestreams: {ex.Message}");
-            }
-        }
-
-        private List<ReminderThreshold> BuildReminderThresholds()
-        {
-            var thresholds = new List<ReminderThreshold>();
-
-            if (enableReminder1)
-            {
-                thresholds.Add(new ReminderThreshold("Reminder 1", TimeSpan.FromMinutes(reminder1LeadTimeInMinutes)));
-            }
-
-            if (enableReminder2)
-            {
-                thresholds.Add(new ReminderThreshold("Reminder 2", TimeSpan.FromMinutes(reminder2LeadTimeInMinutes)));
-            }
-
-            return thresholds;
-        }
-
-        private void NormalizeReminderSettings()
-        {
-            if (reminder1LeadTimeInMinutes < 0)
-            {
-                reminder1LeadTimeInMinutes = 0;
-            }
-
-            if (reminder2LeadTimeInMinutes < 0)
-            {
-                reminder2LeadTimeInMinutes = 0;
-            }
-
-            if (enableReminder1 && enableReminder2 && reminder1LeadTimeInMinutes == reminder2LeadTimeInMinutes)
-            {
-                reminder2LeadTimeInMinutes = reminder1LeadTimeInMinutes > 0
-                    ? reminder1LeadTimeInMinutes - 1
-                    : reminder1LeadTimeInMinutes + 1;
             }
         }
 
