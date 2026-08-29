@@ -58,6 +58,7 @@ namespace Yobi.Presentation
 
         private bool _isConfigured;
         private bool _isRefreshing;
+        private bool _refreshPending;
         private CancellationTokenSource _pollingCts;
 
         // Updated only by a completed refresh; read every few seconds by ReminderCheckLoop.
@@ -314,6 +315,12 @@ namespace Yobi.Presentation
         {
             if (_isRefreshing)
             {
+                // A refresh (poll tick, manual click, or post-Add) is already in flight. Rather
+                // than silently dropping this request - which would leave a creator added mid-poll
+                // invisible until the next poll interval - flag that fresh data is wanted and let
+                // the in-flight refresh below pick it up as an immediate follow-up pass once it's
+                // done, instead of running concurrently.
+                _refreshPending = true;
                 return;
             }
 
@@ -322,17 +329,23 @@ namespace Yobi.Presentation
 
             try
             {
-                var watched = _watchlistUseCase.GetAll();
-                var identities = new List<ChannelIdentity>(watched.Count);
-                foreach (var creator in watched)
+                do
                 {
-                    identities.Add(new ChannelIdentity(creator.ChannelId, creator.DisplayName));
+                    _refreshPending = false;
+
+                    var watched = _watchlistUseCase.GetAll();
+                    var identities = new List<ChannelIdentity>(watched.Count);
+                    foreach (var creator in watched)
+                    {
+                        identities.Add(new ChannelIdentity(creator.ChannelId, creator.DisplayName));
+                    }
+
+                    var statuses = await _creatorStatusUseCase.GetStatusesAsync(identities, isWatchlisted: true, cancellationToken);
+
+                    RenderWatchlistRows(statuses);
+                    _latestReminderSnapshot = BuildChannelLivestreamResults(statuses);
                 }
-
-                var statuses = await _creatorStatusUseCase.GetStatusesAsync(identities, isWatchlisted: true, cancellationToken);
-
-                RenderWatchlistRows(statuses);
-                _latestReminderSnapshot = BuildChannelLivestreamResults(statuses);
+                while (_refreshPending);
             }
             catch (OperationCanceledException)
             {
