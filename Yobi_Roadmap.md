@@ -1,4 +1,4 @@
-pi# Yobi Roadmap
+# Yobi Roadmap
 
 ## Phase 1 — Holodex + Core MVP
 

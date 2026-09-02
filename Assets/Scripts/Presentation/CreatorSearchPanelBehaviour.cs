@@ -8,8 +8,10 @@ using UnityEngine.UI;
 using Yobi.Application.Models;
 using Yobi.Application.UseCases;
 using Yobi.Domain.Entities;
+using Yobi.Domain.Interfaces;
 using Yobi.Infrastructure.Api.Holodex;
 using Yobi.Infrastructure.Config;
+using Yobi.Infrastructure.Mock;
 
 namespace Yobi.Presentation
 {
@@ -50,6 +52,14 @@ namespace Yobi.Presentation
 
         [SerializeField]
         private int pollingIntervalInMinutes = 5;
+
+        [Header("Data Source")]
+        [SerializeField]
+        private LivestreamDataSourceMode dataSource = LivestreamDataSourceMode.Real;
+
+        [Tooltip("Mock mode only: how far from now (in minutes) the single mock creator's livestream is scheduled. <=0 means currently LIVE.")]
+        [SerializeField]
+        private int mockStreamStartInMinutes = 6;
 
         private SearchCreatorsUseCase _searchCreatorsUseCase;
         private ManageWatchlistUseCase _watchlistUseCase;
@@ -100,10 +110,27 @@ namespace Yobi.Presentation
 
             try
             {
-                var configProvider = new LocalFileChannelConfigProvider();
-                var holodexClient = new HolodexApiClient(configProvider.GetHolodexApiKey());
-                _searchCreatorsUseCase = new SearchCreatorsUseCase(holodexClient);
-                _creatorStatusUseCase = new GetCreatorStatusUseCase(holodexClient);
+                ICreatorSearchProvider searchProvider;
+                ICreatorLivestreamStatusProvider statusProvider;
+
+                if (dataSource == LivestreamDataSourceMode.Mock)
+                {
+                    // Zero network calls, zero dependency on config.local.json - purely local
+                    // so LIVE/UPCOMING/NONE and reminder behaviour can be verified without
+                    // touching Holodex at all.
+                    searchProvider = new MockCreatorSearchProvider();
+                    statusProvider = new MockCreatorLivestreamStatusProvider(TimeSpan.FromMinutes(mockStreamStartInMinutes));
+                }
+                else
+                {
+                    var configProvider = new LocalFileChannelConfigProvider();
+                    var holodexClient = new HolodexApiClient(configProvider.GetHolodexApiKey());
+                    searchProvider = holodexClient;
+                    statusProvider = holodexClient;
+                }
+
+                _searchCreatorsUseCase = new SearchCreatorsUseCase(searchProvider);
+                _creatorStatusUseCase = new GetCreatorStatusUseCase(statusProvider);
                 _isConfigured = true;
             }
             catch (Exception ex)
@@ -261,6 +288,8 @@ namespace Yobi.Presentation
                 {
                     resultStatusText.text = FormatCreatorStatus(status);
                 }
+
+                LogCreatorStatus(status);
             }
             catch (Exception ex)
             {
@@ -391,6 +420,30 @@ namespace Yobi.Presentation
                 }
 
                 _activeWatchlistRows.Add(row);
+                LogCreatorStatus(status);
+            }
+        }
+
+        private void LogCreatorStatus(CreatorStatus status)
+        {
+            var tagPrefix = dataSource == LivestreamDataSourceMode.Mock ? "Mock" : "Holodex";
+            var statusTag = status.LiveStatus.ToString().ToUpperInvariant();
+
+            if (status.LiveStatus == CreatorLiveStatus.Live && status.CurrentLivestream != null)
+            {
+                Debug.Log($"[{tagPrefix}][{statusTag}]\nChannel: {status.ChannelName}\nTitle: {status.CurrentLivestream.Title}\nVideo ID: {status.CurrentLivestream.VideoId}\nURL: {status.CurrentLivestream.Url}");
+            }
+            else if (status.LiveStatus == CreatorLiveStatus.Upcoming)
+            {
+                foreach (var upcoming in status.UpcomingLivestreams)
+                {
+                    var localStart = upcoming.ScheduledStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+                    Debug.Log($"[{tagPrefix}][{statusTag}]\nChannel: {status.ChannelName}\nTitle: {upcoming.Title}\nScheduled Start: {localStart}\nVideo ID: {upcoming.VideoId}\nURL: {upcoming.Url}");
+                }
+            }
+            else
+            {
+                Debug.Log($"[{tagPrefix}][{statusTag}]\nChannel: {status.ChannelName}\nNo live or upcoming livestreams within the next 24 hours.");
             }
         }
 
