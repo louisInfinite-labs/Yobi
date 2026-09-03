@@ -67,3 +67,13 @@ secrets.json
 config.local.json
 
 *.local.json
+
+# Python
+
+__pycache__/
+
+# Collector run artifacts
+
+topic_checkpoint.json
+
+*.log

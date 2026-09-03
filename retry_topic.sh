@@ -1,7 +1,7 @@
 #!/bin/sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-for i in $(seq 1 60); do
+for i in $(seq 1 20000); do
   echo "=== topic collector attempt $i at $(date) ==="
   python3 -u "$SCRIPT_DIR/holodex_topic_collector.py"
   code=$?
@@ -12,5 +12,5 @@ for i in $(seq 1 60); do
   echo "=== exited $code (not fully done), retry in 8s ==="
   sleep 20
 done
-echo "=== gave up after 60 attempts ==="
+echo "=== gave up after 20000 attempts ==="
 exit 1
