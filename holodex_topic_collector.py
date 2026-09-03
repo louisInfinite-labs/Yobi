@@ -17,15 +17,22 @@ _SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(_SCRIPT_DIR))
 import holodex_collab_collector as base  # noqa: E402
 
-TOPICS = {
-    "VALORANT": "valorant",
-    "LoL": "League_of_Legends",
-    "GTA": "GTA",
-    "Street Fighter 6": "Street_Fighter",
-}
+_GAME_TOPICS_PATH = _SCRIPT_DIR / "holodex_game_topics.json"
+if _GAME_TOPICS_PATH.exists():
+    # Broad list of every Holodex topic that looks like an actual game (see
+    # holodex_topics_full.json for the raw /topics dump this was filtered from),
+    # ordered by video count descending so the highest-value topics get processed first.
+    TOPICS = json.loads(_GAME_TOPICS_PATH.read_text(encoding="utf-8"))
+else:
+    TOPICS = {
+        "VALORANT": "valorant",
+        "LoL": "League_of_Legends",
+        "GTA": "GTA",
+        "Street Fighter 6": "Street_Fighter",
+    }
 
 PAGE_SIZE = 50
-CUTOFF = datetime(2023, 1, 1, tzinfo=timezone.utc)
+CUTOFF = datetime(2019, 1, 1, tzinfo=timezone.utc)
 OUT_DIR = Path(os.environ.get("YOBI_PROJECT_ROOT", str(_SCRIPT_DIR)))
 CHECKPOINT_PATH = OUT_DIR / "topic_checkpoint.json"
 
