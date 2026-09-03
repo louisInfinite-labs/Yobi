@@ -1,0 +1,13 @@
+#!/bin/sh
+for i in $(seq 1 60); do
+  echo "=== topic collector attempt $i at $(date) ==="
+  python3 -u /Users/louis/Yobi/holodex_topic_collector.py
+  code=$?
+  if [ $code -eq 0 ]; then
+    echo "=== all topics genuinely reached 2023 cutoff ==="
+    exit 0
+  fi
+  echo "=== exited $code (not fully done), retry in 8s ==="
+  sleep 20
+done
+echo "=== gave up after 60 attempts ==="
