@@ -26,5 +26,38 @@ namespace Yobi.Domain.Entities
             _items.Add(creator);
             return true;
         }
+
+        public bool Remove(string channelId)
+        {
+            if (!_channelIds.Remove(channelId))
+            {
+                return false;
+            }
+
+            for (var i = 0; i < _items.Count; i++)
+            {
+                if (_items[i].ChannelId == channelId)
+                {
+                    _items.RemoveAt(i);
+                    break;
+                }
+            }
+
+            return true;
+        }
+
+        public bool TrySetEnabled(string channelId, bool isEnabled)
+        {
+            foreach (var creator in _items)
+            {
+                if (creator.ChannelId == channelId)
+                {
+                    creator.SetEnabled(isEnabled);
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 }
