@@ -44,7 +44,15 @@ def _compute_checkpoint_version() -> str:
     # videos were never fetched). Offsets/rows stay valid across a version change - only the
     # "done" flags need clearing - so this only needs to be sensitive to changes that affect
     # completion correctness, not offset validity.
-    payload = json.dumps({"cutoff": CUTOFF.isoformat(), "topics": sorted(TOPICS.values())}, sort_keys=True)
+    #
+    # Hashes the full (category label -> topic id) mapping, not just the topic ids: a
+    # category-label-only rename (id unchanged) still needs to invalidate "done", because
+    # already-stored rows for that topic carry the old label as primary_category and won't
+    # get relabeled just by re-fetching later pages. In this project's own generated
+    # holodex_game_topics.json the label always equals the topic id, so that specific
+    # rename case can't happen in practice - but the mapping shape (arbitrary label -> id,
+    # as in the hardcoded fallback TOPICS below) allows it, so the hash covers it anyway.
+    payload = json.dumps({"cutoff": CUTOFF.isoformat(), "topics": sorted(TOPICS.items())}, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
