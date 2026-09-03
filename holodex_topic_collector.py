@@ -53,6 +53,39 @@ def _compute_checkpoint_version() -> str:
 
 CHECKPOINT_VERSION = _compute_checkpoint_version()
 
+# Rows collected before this script had holodex_game_topics.json (i.e. under the hardcoded
+# 4-entry fallback TOPICS above, where the display label differs from the topic id) persisted
+# that display label as primary_category/all_categories. The fix that made every *new* row
+# store the topic id instead doesn't retroactively touch rows already on disk, so those old
+# rows still carry these exact legacy labels and must be migrated on load - otherwise the
+# duplicate-merge path below appends a topic id onto a stale label, producing mixed formats
+# like "VALORANT | valorant" instead of just "valorant".
+_LEGACY_LABEL_TO_TOPIC_ID = {
+    "VALORANT": "valorant",
+    "LoL": "League_of_Legends",
+    "GTA": "GTA",
+    "Street Fighter 6": "Street_Fighter",
+}
+
+
+def _migrate_legacy_row_categories(rows_by_id: dict) -> int:
+    migrated = 0
+    for row in rows_by_id.values():
+        raw_categories = row.get("all_categories") or ""
+        cats = raw_categories.split(" | ") if raw_categories else []
+        new_cats = [_LEGACY_LABEL_TO_TOPIC_ID.get(c, c) for c in cats]
+        deduped = list(dict.fromkeys(new_cats))  # de-dup, preserve order
+        if deduped != cats:
+            row["all_categories"] = " | ".join(deduped)
+            migrated += 1
+
+        primary = row.get("primary_category")
+        if primary in _LEGACY_LABEL_TO_TOPIC_ID:
+            row["primary_category"] = _LEGACY_LABEL_TO_TOPIC_ID[primary]
+            migrated += 1
+
+    return migrated
+
 
 def get_json_by_topic(topic: str, offset: int, api_key: str):
     params = {
@@ -87,6 +120,10 @@ def main() -> int:
         if isinstance(r, dict) and all(r.get(k) is not None for k in required_keys)
     }
     offsets = state.get("offsets", {})
+
+    migrated_count = _migrate_legacy_row_categories(rows_by_id)
+    if migrated_count:
+        print(f"[INFO] Migrated {migrated_count} legacy category label(s) to topic ids")
 
     if state.get("version") != CHECKPOINT_VERSION:
         stale_done_keys = [k for k in offsets if k.endswith("_done") and offsets[k]]
