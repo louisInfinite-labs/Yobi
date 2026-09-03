@@ -1,10 +1,12 @@
-using System;
 using System.Collections.Generic;
 using UnityEngine;
 using Yobi.Domain.Entities;
 
 namespace Yobi.Presentation
 {
+    // Inspector-editable defaults only. Normalization and threshold-building rules live in
+    // Yobi.Domain.Entities.ReminderConfiguration so they stay usable (and testable) outside
+    // this Unity asset - e.g. once a value is loaded back from persisted storage.
     [CreateAssetMenu(fileName = "ReminderSettings", menuName = "Yobi/Reminder Settings")]
     public sealed class ReminderSettings : ScriptableObject
     {
@@ -22,46 +24,21 @@ namespace Yobi.Presentation
 
         private void OnValidate()
         {
-            Normalize();
+            var normalized = ToDomainConfiguration();
+            enableReminder1 = normalized.EnableReminder1;
+            reminder1LeadTimeInMinutes = normalized.Reminder1LeadTimeInMinutes;
+            enableReminder2 = normalized.EnableReminder2;
+            reminder2LeadTimeInMinutes = normalized.Reminder2LeadTimeInMinutes;
         }
 
         public IReadOnlyList<ReminderThreshold> BuildThresholds()
         {
-            Normalize();
-
-            var thresholds = new List<ReminderThreshold>();
-
-            if (enableReminder1)
-            {
-                thresholds.Add(new ReminderThreshold("Reminder 1", TimeSpan.FromMinutes(reminder1LeadTimeInMinutes)));
-            }
-
-            if (enableReminder2)
-            {
-                thresholds.Add(new ReminderThreshold("Reminder 2", TimeSpan.FromMinutes(reminder2LeadTimeInMinutes)));
-            }
-
-            return thresholds;
+            return ToDomainConfiguration().BuildThresholds();
         }
 
-        private void Normalize()
+        public ReminderConfiguration ToDomainConfiguration()
         {
-            if (reminder1LeadTimeInMinutes < 0)
-            {
-                reminder1LeadTimeInMinutes = 0;
-            }
-
-            if (reminder2LeadTimeInMinutes < 0)
-            {
-                reminder2LeadTimeInMinutes = 0;
-            }
-
-            if (enableReminder1 && enableReminder2 && reminder1LeadTimeInMinutes == reminder2LeadTimeInMinutes)
-            {
-                reminder2LeadTimeInMinutes = reminder1LeadTimeInMinutes > 0
-                    ? reminder1LeadTimeInMinutes - 1
-                    : reminder1LeadTimeInMinutes + 1;
-            }
+            return new ReminderConfiguration(enableReminder1, reminder1LeadTimeInMinutes, enableReminder2, reminder2LeadTimeInMinutes);
         }
     }
 }

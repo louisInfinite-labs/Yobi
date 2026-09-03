@@ -12,6 +12,8 @@ using Yobi.Domain.Interfaces;
 using Yobi.Infrastructure.Api.Holodex;
 using Yobi.Infrastructure.Config;
 using Yobi.Infrastructure.Mock;
+using Yobi.Infrastructure.Notifications;
+using Yobi.Infrastructure.Storage;
 
 namespace Yobi.Presentation
 {
@@ -65,6 +67,9 @@ namespace Yobi.Presentation
         private ManageWatchlistUseCase _watchlistUseCase;
         private GetCreatorStatusUseCase _creatorStatusUseCase;
         private EvaluateLivestreamRemindersUseCase _reminderUseCase;
+        private IReminderConfigurationRepository _reminderConfigurationRepository;
+        private ReminderConfiguration _reminderConfiguration;
+        private SyncScheduledRemindersUseCase _syncScheduledRemindersUseCase;
 
         private bool _isConfigured;
         private bool _isRefreshing;
@@ -105,8 +110,23 @@ namespace Yobi.Presentation
                 watchlistRowTemplate.SetActive(false);
             }
 
-            _watchlistUseCase = new ManageWatchlistUseCase();
+            _watchlistUseCase = new ManageWatchlistUseCase(new LocalFileWatchlistRepository());
             _reminderUseCase = new EvaluateLivestreamRemindersUseCase();
+
+            _reminderConfigurationRepository = new LocalFileReminderConfigurationRepository();
+            var defaultReminderConfiguration = reminderSettings != null
+                ? reminderSettings.ToDomainConfiguration()
+                : new ReminderConfiguration(enableReminder1: true, reminder1LeadTimeInMinutes: 30, enableReminder2: true, reminder2LeadTimeInMinutes: 15);
+            _reminderConfiguration = _reminderConfigurationRepository.Load(defaultReminderConfiguration);
+
+            // Pre-scheduled OS notifications (Yobi_* native calls) only exist for macOS - other
+            // platforms simply keep the console-only reminder path until Phase 4 cross-platform work.
+            if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer || UnityEngine.Application.platform == RuntimePlatform.OSXEditor)
+            {
+                var scheduler = new MacNotificationScheduler();
+                scheduler.RequestAuthorization();
+                _syncScheduledRemindersUseCase = new SyncScheduledRemindersUseCase(scheduler);
+            }
 
             try
             {
@@ -162,6 +182,16 @@ namespace Yobi.Presentation
             {
                 _pollingCts = new CancellationTokenSource();
                 RunPollingLoop(_pollingCts.Token);
+            }
+        }
+
+        private void Update()
+        {
+            // Native notification clicks can arrive off the main thread; draining here is what
+            // makes it safe to call Application.OpenURL in response to one.
+            if (_syncScheduledRemindersUseCase != null)
+            {
+                MacNotificationScheduler.PumpPendingClicks();
             }
         }
 
@@ -373,6 +403,8 @@ namespace Yobi.Presentation
 
                     RenderWatchlistRows(statuses);
                     _latestReminderSnapshot = BuildChannelLivestreamResults(statuses);
+
+                    _syncScheduledRemindersUseCase?.Sync(_latestReminderSnapshot, _reminderConfiguration.BuildThresholds(), DateTime.UtcNow);
                 }
                 while (_refreshPending);
             }
@@ -515,12 +547,12 @@ namespace Yobi.Presentation
 
         private void EvaluateReminders()
         {
-            if (reminderSettings == null || _latestReminderSnapshot.Count == 0)
+            if (_reminderConfiguration == null || _latestReminderSnapshot.Count == 0)
             {
                 return;
             }
 
-            var thresholds = reminderSettings.BuildThresholds();
+            var thresholds = _reminderConfiguration.BuildThresholds();
             if (thresholds.Count == 0)
             {
                 return;
