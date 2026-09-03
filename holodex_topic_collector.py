@@ -5,6 +5,7 @@ original holodex_collab_collector.py.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -37,6 +38,19 @@ OUT_DIR = Path(os.environ.get("YOBI_PROJECT_ROOT", str(_SCRIPT_DIR)))
 CHECKPOINT_PATH = OUT_DIR / "topic_checkpoint.json"
 
 
+def _compute_checkpoint_version() -> str:
+    # Changing CUTOFF or the topic mapping must not let a stale "done" flag from an earlier
+    # run silently skip a topic that now needs re-checking (e.g. an older cutoff means older
+    # videos were never fetched). Offsets/rows stay valid across a version change - only the
+    # "done" flags need clearing - so this only needs to be sensitive to changes that affect
+    # completion correctness, not offset validity.
+    payload = json.dumps({"cutoff": CUTOFF.isoformat(), "topics": sorted(TOPICS.values())}, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+CHECKPOINT_VERSION = _compute_checkpoint_version()
+
+
 def get_json_by_topic(topic: str, offset: int, api_key: str):
     params = {
         "status": "past",
@@ -56,7 +70,7 @@ def main() -> int:
         print("ERROR: set HOLODEX_API_KEY", file=sys.stderr)
         return 2
 
-    state = {"offsets": {}, "rows": []}
+    state = {"offsets": {}, "rows": [], "version": None}
     if CHECKPOINT_PATH.exists():
         try:
             state = json.loads(CHECKPOINT_PATH.read_text(encoding="utf-8"))
@@ -70,6 +84,16 @@ def main() -> int:
         if isinstance(r, dict) and all(r.get(k) is not None for k in required_keys)
     }
     offsets = state.get("offsets", {})
+
+    if state.get("version") != CHECKPOINT_VERSION:
+        stale_done_keys = [k for k in offsets if k.endswith("_done") and offsets[k]]
+        if stale_done_keys:
+            print(f"[INFO] CUTOFF or topic mapping changed since this checkpoint was written - "
+                  f"clearing {len(stale_done_keys)} 'done' flag(s) so those topics get re-checked "
+                  f"against the new cutoff (existing offsets/rows are kept)")
+        for key in list(offsets.keys()):
+            if key.endswith("_done"):
+                offsets[key] = False
 
     for category, topic in TOPICS.items():
         offset = offsets.get(topic, 0)
@@ -109,16 +133,30 @@ def main() -> int:
                 if when and (oldest is None or when < oldest):
                     oldest = when
                 row = base.flatten(video, CUTOFF, keep_no_mentions=False)
-                if row and row["video_id"]:
+                if not row or not row["video_id"]:
+                    continue
+
+                vid = row["video_id"]
+                existing = rows_by_id.get(vid)
+                if existing:
+                    # Same video reached via a second topic query (the 1600+ topic mapping
+                    # means overlap is routine) - keep the row already stored (whose
+                    # primary_category came from a topic processed earlier, i.e. higher video
+                    # count / more central to the stream) and just record the extra category.
+                    existing_cats = existing["all_categories"].split(" | ") if existing.get("all_categories") else []
+                    if category not in existing_cats:
+                        existing_cats.append(category)
+                        existing["all_categories"] = " | ".join(existing_cats)
+                else:
                     row["primary_category"] = category
                     row["all_categories"] = category
-                    rows_by_id[row["video_id"]] = row
+                    rows_by_id[vid] = row
 
             offset += len(videos)
             offsets[topic] = offset
 
             ordered = sorted(rows_by_id.values(), key=lambda x: x["published_at"], reverse=True)
-            CHECKPOINT_PATH.write_text(json.dumps({"offsets": offsets, "rows": ordered}, ensure_ascii=False), encoding="utf-8")
+            CHECKPOINT_PATH.write_text(json.dumps({"offsets": offsets, "rows": ordered, "version": CHECKPOINT_VERSION}, ensure_ascii=False), encoding="utf-8")
 
             print(f"[INFO] {category} offset={offset} candidates_total={len(ordered)} oldest={oldest}")
 
@@ -129,7 +167,7 @@ def main() -> int:
 
             time.sleep(2.0)
 
-        CHECKPOINT_PATH.write_text(json.dumps({"offsets": offsets, "rows": list(rows_by_id.values())}, ensure_ascii=False), encoding="utf-8")
+        CHECKPOINT_PATH.write_text(json.dumps({"offsets": offsets, "rows": list(rows_by_id.values()), "version": CHECKPOINT_VERSION}, ensure_ascii=False), encoding="utf-8")
 
     ordered = sorted(rows_by_id.values(), key=lambda x: x["published_at"], reverse=True)
     md_path = OUT_DIR / "holodex_topic_candidates.md"
