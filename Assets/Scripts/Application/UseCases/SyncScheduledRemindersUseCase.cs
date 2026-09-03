@@ -15,11 +15,11 @@ namespace Yobi.Application.UseCases
     {
         private readonly INotificationScheduler _scheduler;
 
-        // Keyed by notification id ("{videoId}::{thresholdLabel}") -> the fire time we last
-        // scheduled it for. This is intentionally in-memory only: if Yobi restarts, every
+        // Keyed by notification id ("{videoId}::{thresholdLabel}") -> the full payload we last
+        // scheduled it with. This is intentionally in-memory only: if Yobi restarts, every
         // still-relevant notification gets recomputed and re-scheduled, which is harmless
         // because scheduling with an existing id replaces the pending OS-level request.
-        private readonly Dictionary<string, DateTime> _lastKnownSchedule = new Dictionary<string, DateTime>();
+        private readonly Dictionary<string, ScheduledReminderNotification> _lastKnownSchedule = new Dictionary<string, ScheduledReminderNotification>();
 
         public SyncScheduledRemindersUseCase(INotificationScheduler scheduler)
         {
@@ -38,13 +38,13 @@ namespace Yobi.Application.UseCases
                 var id = kvp.Key;
                 var notification = kvp.Value;
 
-                if (_lastKnownSchedule.TryGetValue(id, out var previousFireAtUtc) && previousFireAtUtc == notification.FireAtUtc)
+                if (_lastKnownSchedule.TryGetValue(id, out var previous) && IsUnchanged(previous, notification))
                 {
                     continue;
                 }
 
                 _scheduler.Schedule(notification);
-                _lastKnownSchedule[id] = notification.FireAtUtc;
+                _lastKnownSchedule[id] = notification;
             }
 
             var staleIds = new List<string>();
@@ -102,6 +102,17 @@ namespace Yobi.Application.UseCases
         private static string BuildId(string videoId, string thresholdLabel)
         {
             return $"{videoId}::{thresholdLabel}";
+        }
+
+        // A title/URL-only change (e.g. Holodex title edit) without a time change must still
+        // trigger a re-schedule, otherwise the user is left with stale notification content or
+        // a stale click-through URL.
+        private static bool IsUnchanged(ScheduledReminderNotification previous, ScheduledReminderNotification current)
+        {
+            return previous.FireAtUtc == current.FireAtUtc
+                && previous.Title == current.Title
+                && previous.Body == current.Body
+                && previous.Url == current.Url;
         }
     }
 }

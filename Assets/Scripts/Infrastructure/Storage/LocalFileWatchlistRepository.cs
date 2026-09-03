@@ -25,8 +25,21 @@ namespace Yobi.Infrastructure.Storage
                 return watchlist;
             }
 
-            var json = File.ReadAllText(_filePath);
-            var dto = JsonUtility.FromJson<WatchlistDto>(json);
+            WatchlistDto dto;
+            try
+            {
+                var json = File.ReadAllText(_filePath);
+                dto = JsonUtility.FromJson<WatchlistDto>(json);
+            }
+            catch (Exception ex)
+            {
+                // A corrupt/unreadable file must not abort Awake() before the UI wires up -
+                // quarantine it (so it stops tripping this on every launch) and start empty.
+                Debug.LogError($"[LocalFileWatchlistRepository] Failed to read {_filePath}, starting with an empty watchlist: {ex.Message}");
+                QuarantineCorruptFile();
+                return watchlist;
+            }
+
             if (dto?.creators == null)
             {
                 return watchlist;
@@ -56,7 +69,33 @@ namespace Yobi.Infrastructure.Storage
 
             var dto = new WatchlistDto { creators = creators.ToArray() };
             var json = JsonUtility.ToJson(dto, prettyPrint: true);
-            File.WriteAllText(_filePath, json);
+
+            // Write to a temp file and swap it in, so a crash/power-loss mid-write can't leave
+            // a truncated tracked_creators.json behind for the next Load() to choke on.
+            var tempPath = _filePath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            if (File.Exists(_filePath))
+            {
+                File.Delete(_filePath);
+            }
+            File.Move(tempPath, _filePath);
+        }
+
+        private void QuarantineCorruptFile()
+        {
+            try
+            {
+                var quarantinePath = _filePath + ".corrupted";
+                if (File.Exists(quarantinePath))
+                {
+                    File.Delete(quarantinePath);
+                }
+                File.Move(_filePath, quarantinePath);
+            }
+            catch (Exception)
+            {
+                // Best-effort - failing to quarantine must not itself crash startup.
+            }
         }
 
         [Serializable]

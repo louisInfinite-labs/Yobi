@@ -14,13 +14,13 @@ namespace Yobi.Infrastructure.Notifications
     {
         private const string PluginName = "YobiNotifications";
 
-        private delegate void ClickCallback(string identifier);
+        private delegate void ClickCallback(string identifier, string url);
 
         [DllImport(PluginName)]
         private static extern void Yobi_RequestAuthorization();
 
         [DllImport(PluginName)]
-        private static extern void Yobi_ScheduleNotification(string identifier, string title, string body, double fireAtUnixTimeUtc);
+        private static extern void Yobi_ScheduleNotification(string identifier, string title, string body, string url, double fireAtUnixTimeUtc);
 
         [DllImport(PluginName)]
         private static extern void Yobi_CancelNotification(string identifier);
@@ -28,11 +28,11 @@ namespace Yobi.Infrastructure.Notifications
         [DllImport(PluginName)]
         private static extern void Yobi_SetClickCallback(ClickCallback callback);
 
-        // Native only reports back the identifier that was clicked; the Url to open for that
-        // id is known only here (whatever it was scheduled with most recently), so the whole
-        // "click -> open stream" behaviour stays inside this adapter.
-        private static readonly ConcurrentDictionary<string, string> UrlsById = new ConcurrentDictionary<string, string>();
-        private static readonly ConcurrentQueue<string> PendingClickIds = new ConcurrentQueue<string>();
+        // The Url travels with the OS-persisted notification request itself (native side stores
+        // it in UNMutableNotificationContent.userInfo and hands it back on click), rather than an
+        // in-process dictionary here - so a click still resolves correctly even for a notification
+        // that fired while Yobi wasn't running.
+        private static readonly ConcurrentQueue<string> PendingClickUrls = new ConcurrentQueue<string>();
         private static bool _callbackRegistered;
 
         public MacNotificationScheduler()
@@ -51,8 +51,6 @@ namespace Yobi.Infrastructure.Notifications
 
         public void Schedule(ScheduledReminderNotification notification)
         {
-            UrlsById[notification.Id] = notification.Url;
-
             var utc = System.DateTime.SpecifyKind(notification.FireAtUtc, System.DateTimeKind.Utc);
             var fireAtUnixTimeUtc = (double)new System.DateTimeOffset(utc).ToUnixTimeSeconds();
 
@@ -61,12 +59,11 @@ namespace Yobi.Infrastructure.Notifications
             var localFireTime = notification.FireAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
             Debug.Log($"[MacNotificationScheduler] Scheduled '{notification.Id}' for {localFireTime} (local)\n{notification.Title}\n{notification.Body}");
 
-            Yobi_ScheduleNotification(notification.Id, notification.Title, notification.Body, fireAtUnixTimeUtc);
+            Yobi_ScheduleNotification(notification.Id, notification.Title, notification.Body, notification.Url, fireAtUnixTimeUtc);
         }
 
         public void Cancel(string id)
         {
-            UrlsById.TryRemove(id, out _);
             Debug.Log($"[MacNotificationScheduler] Cancelled '{id}'");
             Yobi_CancelNotification(id);
         }
@@ -76,9 +73,9 @@ namespace Yobi.Infrastructure.Notifications
         // a MonoBehaviour.Update() on the main thread instead of acting on it immediately.
         public static void PumpPendingClicks()
         {
-            while (PendingClickIds.TryDequeue(out var id))
+            while (PendingClickUrls.TryDequeue(out var url))
             {
-                if (UrlsById.TryGetValue(id, out var url) && !string.IsNullOrEmpty(url))
+                if (!string.IsNullOrEmpty(url))
                 {
                     UnityEngine.Application.OpenURL(url);
                 }
@@ -86,11 +83,11 @@ namespace Yobi.Infrastructure.Notifications
         }
 
         [MonoPInvokeCallback(typeof(ClickCallback))]
-        private static void OnNativeClick(string identifier)
+        private static void OnNativeClick(string identifier, string url)
         {
-            if (!string.IsNullOrEmpty(identifier))
+            if (!string.IsNullOrEmpty(url))
             {
-                PendingClickIds.Enqueue(identifier);
+                PendingClickUrls.Enqueue(url);
             }
         }
     }

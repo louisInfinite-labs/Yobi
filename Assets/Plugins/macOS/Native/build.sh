@@ -10,7 +10,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUT_DIR="$(dirname "$SCRIPT_DIR")"
 
-clang -bundle -o "$OUT_DIR/YobiNotifications.bundle" "$SCRIPT_DIR/YobiNotifications.m" \
+clang -bundle -fobjc-arc -o "$OUT_DIR/YobiNotifications.bundle" "$SCRIPT_DIR/YobiNotifications.m" \
     -framework Foundation -framework UserNotifications
 
 codesign --force --sign - "$OUT_DIR/YobiNotifications.bundle"

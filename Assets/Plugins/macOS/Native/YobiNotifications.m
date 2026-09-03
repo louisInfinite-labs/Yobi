@@ -9,7 +9,7 @@
 #import <Foundation/Foundation.h>
 #import <UserNotifications/UserNotifications.h>
 
-typedef void (*YobiNotificationClickCallback)(const char *identifier);
+typedef void (*YobiNotificationClickCallback)(const char *identifier, const char *url);
 
 static YobiNotificationClickCallback g_clickCallback = NULL;
 
@@ -33,12 +33,18 @@ static YobiNotificationClickCallback g_clickCallback = NULL;
           withCompletionHandler:(void (^)(void))completionHandler
 {
     NSString *identifier = response.notification.request.identifier;
+    // The URL travels with the OS-persisted notification request itself (userInfo), not just
+    // in-process state - so a click still resolves correctly even if Yobi wasn't running when
+    // the notification fired and got re-launched only by the click.
+    NSString *url = response.notification.request.content.userInfo[@"url"];
     if (g_clickCallback != NULL && identifier != nil) {
         const char *idCopy = strdup([identifier UTF8String]);
+        const char *urlCopy = strdup(url ? [url UTF8String] : "");
         YobiNotificationClickCallback callback = g_clickCallback;
         dispatch_async(dispatch_get_main_queue(), ^{
-            callback(idCopy);
+            callback(idCopy, urlCopy);
             free((void *)idCopy);
+            free((void *)urlCopy);
         });
     }
 
@@ -75,7 +81,7 @@ void Yobi_RequestAuthorization(void)
     }];
 }
 
-void Yobi_ScheduleNotification(const char *identifier, const char *title, const char *body, double fireAtUnixTimeUtc)
+void Yobi_ScheduleNotification(const char *identifier, const char *title, const char *body, const char *url, double fireAtUnixTimeUtc)
 {
     Yobi_EnsureDelegate();
 
@@ -91,6 +97,10 @@ void Yobi_ScheduleNotification(const char *identifier, const char *title, const 
     content.title = [NSString stringWithUTF8String:title];
     content.body = [NSString stringWithUTF8String:body];
     content.sound = [UNNotificationSound defaultSound];
+    if (url != NULL && url[0] != '\0') {
+        // Stored on the request itself so a click can resolve it even after Yobi has restarted.
+        content.userInfo = @{ @"url": [NSString stringWithUTF8String:url] };
+    }
 
     UNTimeIntervalNotificationTrigger *trigger = [UNTimeIntervalNotificationTrigger triggerWithTimeInterval:interval repeats:NO];
     NSString *nsIdentifier = [NSString stringWithUTF8String:identifier];

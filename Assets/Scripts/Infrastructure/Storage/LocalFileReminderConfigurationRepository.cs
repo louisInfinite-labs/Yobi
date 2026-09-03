@@ -23,8 +23,21 @@ namespace Yobi.Infrastructure.Storage
                 return defaultConfiguration;
             }
 
-            var json = File.ReadAllText(_filePath);
-            var dto = JsonUtility.FromJson<ReminderConfigurationDto>(json);
+            ReminderConfigurationDto dto;
+            try
+            {
+                var json = File.ReadAllText(_filePath);
+                dto = JsonUtility.FromJson<ReminderConfigurationDto>(json);
+            }
+            catch (Exception ex)
+            {
+                // A corrupt/unreadable file must not abort Awake() before the UI wires up -
+                // quarantine it (so it stops tripping this on every launch) and fall back to defaults.
+                Debug.LogError($"[LocalFileReminderConfigurationRepository] Failed to read {_filePath}, falling back to defaults: {ex.Message}");
+                QuarantineCorruptFile();
+                return defaultConfiguration;
+            }
+
             if (dto == null)
             {
                 return defaultConfiguration;
@@ -44,7 +57,33 @@ namespace Yobi.Infrastructure.Storage
             };
 
             var json = JsonUtility.ToJson(dto, prettyPrint: true);
-            File.WriteAllText(_filePath, json);
+
+            // Write to a temp file and swap it in, so a crash/power-loss mid-write can't leave
+            // a truncated reminder_settings.json behind for the next Load() to choke on.
+            var tempPath = _filePath + ".tmp";
+            File.WriteAllText(tempPath, json);
+            if (File.Exists(_filePath))
+            {
+                File.Delete(_filePath);
+            }
+            File.Move(tempPath, _filePath);
+        }
+
+        private void QuarantineCorruptFile()
+        {
+            try
+            {
+                var quarantinePath = _filePath + ".corrupted";
+                if (File.Exists(quarantinePath))
+                {
+                    File.Delete(quarantinePath);
+                }
+                File.Move(_filePath, quarantinePath);
+            }
+            catch (Exception)
+            {
+                // Best-effort - failing to quarantine must not itself crash startup.
+            }
         }
 
         [Serializable]
