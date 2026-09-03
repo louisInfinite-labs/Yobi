@@ -40,7 +40,17 @@ namespace Yobi.Infrastructure.Storage
                 return watchlist;
             }
 
-            if (dto?.creators == null)
+            if (dto == null)
+            {
+                // An empty/malformed-but-readable file deserializes to null rather than
+                // throwing - without quarantining here too, it would keep tripping this
+                // fallback on every future launch instead of self-healing once.
+                Debug.LogError($"[LocalFileWatchlistRepository] {_filePath} did not deserialize to a valid watchlist, starting empty.");
+                QuarantineCorruptFile();
+                return watchlist;
+            }
+
+            if (dto.creators == null)
             {
                 return watchlist;
             }
@@ -72,13 +82,18 @@ namespace Yobi.Infrastructure.Storage
 
             // Write to a temp file and swap it in, so a crash/power-loss mid-write can't leave
             // a truncated tracked_creators.json behind for the next Load() to choke on.
+            // File.Replace (rather than delete-then-move) avoids a window where a crash between
+            // the two steps would delete the last valid watchlist without the new one landing.
             var tempPath = _filePath + ".tmp";
             File.WriteAllText(tempPath, json);
             if (File.Exists(_filePath))
             {
-                File.Delete(_filePath);
+                File.Replace(tempPath, _filePath, null);
             }
-            File.Move(tempPath, _filePath);
+            else
+            {
+                File.Move(tempPath, _filePath);
+            }
         }
 
         private void QuarantineCorruptFile()
