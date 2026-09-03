@@ -5,8 +5,9 @@ knowledge + query parsing), not model fine-tuning.
 """
 import json
 import urllib.request
+from pathlib import Path
 
-KB_PATH = "/Users/louis/Yobi/Assets/StreamingAssets/CreatorKnowledge/creator_knowledge.v1.json"
+KB_PATH = Path(__file__).resolve().parent / "Assets/StreamingAssets/CreatorKnowledge/creator_knowledge.v1.json"
 
 def find_creator_id(kb, name):
     name = name.strip().lower()
@@ -24,7 +25,10 @@ def build_context(kb, creator_id, max_events=15):
     lines = []
     for e in events[:max_events]:
         names = " / ".join(id_to_name.get(p, p) for p in e["participants"])
-        lines.append(f'- [{e["game"]}] {e["event"]}: {names} (source: {e["source"]})')
+        # needs_manual_review records are inferred, not confirmed - carrying the flag into
+        # the prompt is what stops the model from stating them as verified fact.
+        status = "未核實" if e.get("needs_manual_review") else "已核實"
+        lines.append(f'- [{e["game"]}][{status}] {e["event"]}: {names} (source: {e["source"]})')
     return "\n".join(lines), len(events)
 
 def ask_ollama(prompt):
@@ -42,7 +46,7 @@ def main():
     cid = find_creator_id(kb, query_creator)
     context, total = build_context(kb, cid)
 
-    prompt = f"""你係一個VTuber資料查詢助手。只可以根據下面提供嘅「已知合作記錄」嚟回答,唔可以自己作資料。如果資料入面冇答案,要老實講"資料庫入面搵唔到"。
+    prompt = f"""你係一個VTuber資料查詢助手。只可以根據下面提供嘅「已知合作記錄」嚟回答,唔可以自己作資料。如果資料入面冇答案,要老實講"資料庫入面搵唔到"。標咗「未核實」嘅記錄,回答嗰陣一定要註明係未核實,唔可以講到好似肯定確認咗咁。
 
 已知合作記錄(共{total}條,列咗頭15條):
 {context}

@@ -281,8 +281,9 @@ def main() -> int:
         try:
             state = json.loads(checkpoint.read_text(encoding="utf-8"))
             offset = int(state.get("offset", 0))
+            required_keys = ("video_id", "published_at", "primary_category")
             for row in state.get("rows", []):
-                if isinstance(row, dict) and row.get("video_id"):
+                if isinstance(row, dict) and all(row.get(k) is not None for k in required_keys):
                     rows_by_id[str(row["video_id"])] = {str(k): str(v) for k, v in row.items()}
             print(f"[INFO] Resuming at offset {offset}; {len(rows_by_id)} candidates loaded")
         except (ValueError, OSError):

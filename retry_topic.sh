@@ -1,7 +1,9 @@
 #!/bin/sh
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 for i in $(seq 1 60); do
   echo "=== topic collector attempt $i at $(date) ==="
-  python3 -u /Users/louis/Yobi/holodex_topic_collector.py
+  python3 -u "$SCRIPT_DIR/holodex_topic_collector.py"
   code=$?
   if [ $code -eq 0 ]; then
     echo "=== all topics genuinely reached 2023 cutoff ==="
@@ -11,3 +13,4 @@ for i in $(seq 1 60); do
   sleep 20
 done
 echo "=== gave up after 60 attempts ==="
+exit 1

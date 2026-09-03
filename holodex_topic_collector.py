@@ -13,7 +13,8 @@ import urllib.error
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, "/Users/louis/Yobi")
+_SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(_SCRIPT_DIR))
 import holodex_collab_collector as base  # noqa: E402
 
 TOPICS = {
@@ -25,7 +26,7 @@ TOPICS = {
 
 PAGE_SIZE = 50
 CUTOFF = datetime(2023, 1, 1, tzinfo=timezone.utc)
-OUT_DIR = Path("/Users/louis/Yobi")
+OUT_DIR = Path(os.environ.get("YOBI_PROJECT_ROOT", str(_SCRIPT_DIR)))
 CHECKPOINT_PATH = OUT_DIR / "topic_checkpoint.json"
 
 
@@ -55,7 +56,12 @@ def main() -> int:
         except (ValueError, OSError):
             pass
 
-    rows_by_id = {r["video_id"]: r for r in state.get("rows", []) if r.get("video_id")}
+    required_keys = ("video_id", "published_at", "primary_category")
+    rows_by_id = {
+        r["video_id"]: r
+        for r in state.get("rows", [])
+        if isinstance(r, dict) and all(r.get(k) is not None for k in required_keys)
+    }
     offsets = state.get("offsets", {})
 
     for category, topic in TOPICS.items():
@@ -78,12 +84,20 @@ def main() -> int:
 
             videos = payload if isinstance(payload, list) else payload.get("items", [])
             if not videos:
+                if offset == 0:
+                    # Empty on the very first page likely means an invalid topic id rather
+                    # than a genuinely exhausted topic - don't mark it done, so this surfaces
+                    # as a real failure instead of silently "succeeding" with zero rows.
+                    print(f"ERROR: {category} ({topic}) returned zero results on the first page - check the topic id", file=sys.stderr)
+                    break
                 print(f"[INFO] {category}: no more results, done")
                 offsets[topic + "_done"] = True
                 break
 
             oldest = None
             for video in videos:
+                if not isinstance(video, dict):
+                    continue
                 when = base.video_time(video)
                 if when and (oldest is None or when < oldest):
                     oldest = when
