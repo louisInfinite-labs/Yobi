@@ -39,20 +39,15 @@ CHECKPOINT_PATH = OUT_DIR / "topic_checkpoint.json"
 
 
 def _compute_checkpoint_version() -> str:
-    # Changing CUTOFF or the topic mapping must not let a stale "done" flag from an earlier
-    # run silently skip a topic that now needs re-checking (e.g. an older cutoff means older
-    # videos were never fetched). Offsets/rows stay valid across a version change - only the
-    # "done" flags need clearing - so this only needs to be sensitive to changes that affect
-    # completion correctness, not offset validity.
-    #
-    # Hashes the full (category label -> topic id) mapping, not just the topic ids: a
-    # category-label-only rename (id unchanged) still needs to invalidate "done", because
-    # already-stored rows for that topic carry the old label as primary_category and won't
-    # get relabeled just by re-fetching later pages. In this project's own generated
-    # holodex_game_topics.json the label always equals the topic id, so that specific
-    # rename case can't happen in practice - but the mapping shape (arbitrary label -> id,
-    # as in the hardcoded fallback TOPICS below) allows it, so the hash covers it anyway.
-    payload = json.dumps({"cutoff": CUTOFF.isoformat(), "topics": sorted(TOPICS.items())}, sort_keys=True)
+    # Only CUTOFF affects whether a "done" flag from an earlier run is still trustworthy: an
+    # older cutoff means a topic previously marked done needs re-checking for videos between
+    # the old and new cutoff. Each topic's progress is stored under its own topic id and is
+    # independent of every other topic, so adding/removing/renaming entries in TOPICS cannot
+    # make another topic's stored offset or "done" flag incorrect - nothing else needs to
+    # invalidate this. (Category *labels* are never persisted at all - see the row-building
+    # loop below, which stores the topic id itself rather than the TOPICS dict key - so a
+    # label rename can't create stale data in the first place.)
+    payload = json.dumps({"cutoff": CUTOFF.isoformat()}, sort_keys=True)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
@@ -150,14 +145,20 @@ def main() -> int:
                     # Same video reached via a second topic query (the 1600+ topic mapping
                     # means overlap is routine) - keep the row already stored (whose
                     # primary_category came from a topic processed earlier, i.e. higher video
-                    # count / more central to the stream) and just record the extra category.
+                    # count / more central to the stream) and just record the extra topic.
                     existing_cats = existing["all_categories"].split(" | ") if existing.get("all_categories") else []
-                    if category not in existing_cats:
-                        existing_cats.append(category)
+                    if topic not in existing_cats:
+                        existing_cats.append(topic)
                         existing["all_categories"] = " | ".join(existing_cats)
                 else:
-                    row["primary_category"] = category
-                    row["all_categories"] = category
+                    # Store the topic id itself, not the TOPICS dict key (`category`): the key
+                    # is just a display label that can be renamed independently of the id, and
+                    # persisting it would let a rename leave stale labels on already-stored
+                    # rows with no way to detect or fix them later. The id is stable and is
+                    # what every other piece of this pipeline (offsets, "_done" flags) already
+                    # keys on.
+                    row["primary_category"] = topic
+                    row["all_categories"] = topic
                     rows_by_id[vid] = row
 
             offset += len(videos)
