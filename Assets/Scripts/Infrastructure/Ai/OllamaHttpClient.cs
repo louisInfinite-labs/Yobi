@@ -18,6 +18,12 @@ namespace Yobi.Infrastructure.Ai
         private const string DefaultBaseUrl = "http://localhost:11434";
         private const string DefaultModel = "llama3.1:8b";
 
+        // UnityWebRequest.timeout defaults to 0 (never), and SendAsync only aborts on explicit
+        // cancellation - without a deadline here, a hung/non-responsive Ollama process leaves
+        // the caller (AiQueryPanelBehaviour's askButton) stuck disabled indefinitely. Generous
+        // enough to cover a cold model load, which alone measured ~16s in local testing.
+        private const int RequestTimeoutSeconds = 120;
+
         private readonly string _baseUrl;
         private readonly string _model;
 
@@ -36,6 +42,7 @@ namespace Yobi.Infrastructure.Ai
             request.uploadHandler = new UploadHandlerRaw(bodyBytes);
             request.downloadHandler = new DownloadHandlerBuffer();
             request.SetRequestHeader("Content-Type", "application/json");
+            request.timeout = RequestTimeoutSeconds;
 
             var responseJson = await UnityWebRequestAsync.SendAsync(request, cancellationToken);
             var responseDto = JsonUtility.FromJson<GenerateResponseDto>(responseJson);
