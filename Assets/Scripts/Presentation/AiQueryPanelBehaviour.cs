@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UI;
 using Yobi.Application.UseCases;
@@ -59,27 +60,55 @@ namespace Yobi.Presentation
             _requestCts?.Cancel();
             _requestCts?.Dispose();
             _requestCts = new CancellationTokenSource();
+            var requestToken = _requestCts.Token;
 
             askButton.interactable = false;
-            answerText.text = "諗緊...";
+
+            // Ollama's non-streaming /api/generate gives no progress signal at all, so a fake
+            // percentage would just be a lie - an elapsed-seconds counter is the most this can
+            // honestly show while waiting.
+            using var tickerCts = CancellationTokenSource.CreateLinkedTokenSource(requestToken);
+            RunThinkingTicker(tickerCts.Token);
 
             try
             {
-                var result = await _queryUseCase.AskAsync(query, _requestCts.Token);
+                var result = await _queryUseCase.AskAsync(query, requestToken);
+                tickerCts.Cancel();
                 answerText.text = result.Answer;
             }
             catch (System.OperationCanceledException)
             {
+                tickerCts.Cancel();
                 // Superseded by a newer query - leave whatever text is already showing.
             }
             catch (System.Exception ex)
             {
+                tickerCts.Cancel();
                 answerText.text = "查詢失敗,check下Ollama有冇跑緊。";
                 Debug.LogError($"[AiQueryPanel] Query failed: {ex.Message}");
             }
             finally
             {
                 askButton.interactable = true;
+            }
+        }
+
+        private async void RunThinkingTicker(CancellationToken token)
+        {
+            var elapsedSeconds = 0;
+            while (!token.IsCancellationRequested)
+            {
+                answerText.text = $"諗緊...({elapsedSeconds}s)";
+                elapsedSeconds++;
+
+                try
+                {
+                    await Task.Delay(1000, token);
+                }
+                catch (System.OperationCanceledException)
+                {
+                    return;
+                }
             }
         }
     }

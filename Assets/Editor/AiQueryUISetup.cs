@@ -111,12 +111,15 @@ namespace Yobi.EditorTools
             var panelGo = new GameObject("AiQueryPanel", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             panelGo.transform.SetParent(parent, false);
 
+            // Bottom-right, narrower than CreatorSearchPanel's 420px top-left panel - the two
+            // used to both claim ~420px in an 800px-wide reference resolution and visibly
+            // overlapped in the middle of the screen.
             var rect = panelGo.GetComponent<RectTransform>();
-            rect.anchorMin = new Vector2(1f, 1f);
-            rect.anchorMax = new Vector2(1f, 1f);
-            rect.pivot = new Vector2(1f, 1f);
-            rect.anchoredPosition = new Vector2(-20f, -20f);
-            rect.sizeDelta = new Vector2(420f, 0f);
+            rect.anchorMin = new Vector2(1f, 0f);
+            rect.anchorMax = new Vector2(1f, 0f);
+            rect.pivot = new Vector2(1f, 0f);
+            rect.anchoredPosition = new Vector2(-20f, 20f);
+            rect.sizeDelta = new Vector2(300f, 0f);
 
             panelGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.55f);
 
