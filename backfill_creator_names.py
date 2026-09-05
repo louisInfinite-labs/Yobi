@@ -44,7 +44,14 @@ def build_name_to_channel_id(rows: list[dict]) -> dict[str, str]:
         pairs = [(row.get("uploader_name"), row.get("uploader_channel_id"))]
         collab_names = (row.get("collaborator_names") or "").split(" | ")
         collab_ids = (row.get("collaborator_channel_ids") or "").split(" | ")
-        pairs.extend(zip(collab_names, collab_ids))
+        # holodex_collab_collector.py builds these two fields with independent filters
+        # (channel_name(x) truthy vs x.get("id") truthy) over the same mentions list, so a
+        # mention missing only one of the two silently shifts the lists out of alignment.
+        # zip()-ing mismatched lists would pair a name with a different mention's channel id,
+        # querying the wrong channel and attaching its names to the wrong creator - so skip
+        # pairing entirely for a row where the lengths disagree, rather than guess.
+        if len(collab_names) == len(collab_ids):
+            pairs.extend(zip(collab_names, collab_ids))
         for name, channel_id in pairs:
             if name and channel_id and name not in mapping:
                 mapping[name] = channel_id
@@ -88,9 +95,14 @@ def main() -> int:
                 info = get_channel_info(channel_id, api_key)
             except urllib.error.HTTPError as exc:
                 print(f"[WARN] {creator_id} ({channel_id}): HTTP {exc.code}", file=sys.stderr)
+                # Sleeping only on success meant a 429/5xx - the API already signaling it's
+                # under strain - got answered with zero backoff, immediately followed by the
+                # next request. Back off here too, not just after a successful call.
+                time.sleep(REQUEST_DELAY_SECONDS)
                 continue
             except (urllib.error.URLError, TimeoutError) as exc:
                 print(f"[WARN] {creator_id} ({channel_id}): network failure: {exc}", file=sys.stderr)
+                time.sleep(REQUEST_DELAY_SECONDS)
                 continue
 
             progress[creator_id] = info
