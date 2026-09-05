@@ -1,5 +1,8 @@
 using System.Collections;
 using UnityEngine;
+using Yobi.Domain.Entities;
+using Yobi.Domain.Interfaces;
+using Yobi.Infrastructure.Storage;
 using Yobi.Infrastructure.Window;
 
 namespace Yobi.Presentation
@@ -22,8 +25,12 @@ namespace Yobi.Presentation
         [SerializeField]
         private Camera targetCamera;
 
+        private IWindowPositionRepository _windowPositionRepository;
+
         private void Awake()
         {
+            _windowPositionRepository = new LocalFileWindowPositionRepository();
+
             if (targetCamera == null)
             {
                 targetCamera = Camera.main;
@@ -46,7 +53,30 @@ namespace Yobi.Presentation
             // Editor transparent/borderless rather than a game window.
             if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer)
             {
+                RestoreWindowPosition();
                 StartCoroutine(ApplyWindowSettingsOverFirstFrames());
+            }
+        }
+
+        private void OnApplicationQuit()
+        {
+            if (UnityEngine.Application.platform != RuntimePlatform.OSXPlayer)
+            {
+                return;
+            }
+
+            MacWindowControl.GetPosition(out var x, out var y);
+            _windowPositionRepository.Save(new WindowPosition(x, y));
+        }
+
+        private void RestoreWindowPosition()
+        {
+            var saved = _windowPositionRepository.Load();
+            if (saved != null)
+            {
+                // Clamped natively against the currently connected screens' visible frames, in
+                // case the position was saved on a monitor that isn't connected right now.
+                MacWindowControl.SetPositionClamped(saved.X, saved.Y);
             }
         }
 
