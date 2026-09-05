@@ -12,6 +12,9 @@ namespace Yobi.Infrastructure.Window
         [DllImport(PluginName)]
         private static extern void Yobi_MakeWindowTransparent();
 
+        [DllImport(PluginName)]
+        private static extern void Yobi_ApplyRoomWindowStyle();
+
         // [MarshalAs(UnmanagedType.I1)] on every bool here: the CLR's default P/Invoke
         // marshalling sends a 4-byte Win32 BOOL, but the native side's C99 `bool` (YobiWindowControl.m)
         // is 1 byte - without this, the two sides disagree on the argument/return size.
@@ -34,6 +37,11 @@ namespace Yobi.Infrastructure.Window
         public static void MakeTransparent()
         {
             Yobi_MakeWindowTransparent();
+        }
+
+        public static void ApplyRoomStyle()
+        {
+            Yobi_ApplyRoomWindowStyle();
         }
 
         public static void SetAlwaysOnTop(bool alwaysOnTop)

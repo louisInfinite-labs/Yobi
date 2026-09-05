@@ -77,6 +77,45 @@ void Yobi_MakeWindowTransparent(void)
     }
 }
 
+void Yobi_ApplyRoomWindowStyle(void)
+{
+    NSWindow *window = Yobi_FindMainWindow();
+    if (window == nil) {
+        NSLog(@"[YobiWindowControl] No window found to apply Room style.");
+        return;
+    }
+
+    window.opaque = YES;
+    window.backgroundColor = [NSColor windowBackgroundColor];
+    window.hasShadow = YES;
+
+    // Restore the title bar / traffic-light buttons and let the window resize - Room mode is a
+    // normal-looking window showing the character in a customizable scene, not the floating
+    // borderless overlay Desktop Mate mode is.
+    //
+    // Only ORs in NSWindowStyleMaskResizable rather than reassigning styleMask outright - see
+    // Yobi_MakeWindowTransparent for why replacing the mask crashes.
+    window.titlebarAppearsTransparent = NO;
+    window.titleVisibility = NSWindowTitleVisible;
+    window.styleMask |= NSWindowStyleMaskResizable;
+    [window standardWindowButton:NSWindowCloseButton].hidden = NO;
+    [window standardWindowButton:NSWindowMiniaturizeButton].hidden = NO;
+    [window standardWindowButton:NSWindowZoomButton].hidden = NO;
+
+    window.contentView.wantsLayer = YES;
+    CALayer *contentLayer = window.contentView.layer;
+    if ([contentLayer isKindOfClass:[CAMetalLayer class]]) {
+        ((CAMetalLayer *)contentLayer).opaque = YES;
+    }
+    for (CALayer *sublayer in contentLayer.sublayers) {
+        if ([sublayer isKindOfClass:[CAMetalLayer class]]) {
+            ((CAMetalLayer *)sublayer).opaque = YES;
+        }
+    }
+
+    window.level = NSNormalWindowLevel;
+}
+
 void Yobi_SetWindowAlwaysOnTop(bool alwaysOnTop)
 {
     NSWindow *window = Yobi_FindMainWindow();

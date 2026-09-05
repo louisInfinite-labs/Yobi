@@ -21,6 +21,9 @@ namespace Yobi.Infrastructure.Tray
         [DllImport(PluginName)]
         private static extern void Yobi_SetTrayActionCallback(TrayActionCallback callback);
 
+        [DllImport(PluginName)]
+        private static extern void Yobi_SetToggleModeMenuTitle(string title);
+
         public static void Create()
         {
             Yobi_CreateTrayIcon();
@@ -34,6 +37,11 @@ namespace Yobi.Infrastructure.Tray
         public static void SetActionCallback(TrayActionCallback callback)
         {
             Yobi_SetTrayActionCallback(callback);
+        }
+
+        public static void SetToggleModeMenuTitle(string title)
+        {
+            Yobi_SetToggleModeMenuTitle(title);
         }
     }
 }
