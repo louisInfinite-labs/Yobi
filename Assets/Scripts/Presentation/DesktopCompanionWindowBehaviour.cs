@@ -28,6 +28,7 @@ namespace Yobi.Presentation
 
         private IWindowPositionRepository _windowPositionRepository;
         private SwitchCompanionModeUseCase _switchModeUseCase;
+        private Coroutine _desktopMateStyleCoroutine;
 
         // Lazy rather than assigned in Awake(): TrayIconBehaviour reads CurrentMode from its
         // own Awake() to label the tray menu, and Unity doesn't guarantee Awake() order across
@@ -85,6 +86,15 @@ namespace Yobi.Presentation
 
         private void ApplyMode(CompanionMode mode)
         {
+            // Stop any in-flight reapply loop from a previous DesktopMate entry first - without
+            // this, switching to Room while it's still running would let its remaining frames
+            // call MakeTransparent()/SetAlwaysOnTop(true) after ApplyRoomStyle(), undoing it.
+            if (_desktopMateStyleCoroutine != null)
+            {
+                StopCoroutine(_desktopMateStyleCoroutine);
+                _desktopMateStyleCoroutine = null;
+            }
+
             if (mode == CompanionMode.DesktopMate)
             {
                 if (targetCamera != null)
@@ -96,7 +106,7 @@ namespace Yobi.Presentation
                     targetCamera.clearFlags = CameraClearFlags.SolidColor;
                     targetCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
                 }
-                StartCoroutine(ApplyDesktopMateStyleOverFirstFrames());
+                _desktopMateStyleCoroutine = StartCoroutine(ApplyDesktopMateStyleOverFirstFrames());
             }
             else
             {

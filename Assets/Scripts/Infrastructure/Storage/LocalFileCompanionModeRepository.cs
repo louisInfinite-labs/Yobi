@@ -36,7 +36,12 @@ namespace Yobi.Infrastructure.Storage
                 return defaultMode;
             }
 
-            if (dto == null || string.IsNullOrEmpty(dto.mode) || !Enum.TryParse(dto.mode, out CompanionMode parsedMode))
+            // Enum.TryParse alone would also accept a numeric string outside the enum's
+            // declared values (e.g. "5"), silently returning true - Enum.IsDefined is needed to
+            // actually reject that.
+            if (dto == null || string.IsNullOrEmpty(dto.mode)
+                || !Enum.TryParse(dto.mode, out CompanionMode parsedMode)
+                || !Enum.IsDefined(typeof(CompanionMode), parsedMode))
             {
                 Debug.LogError($"[LocalFileCompanionModeRepository] {_filePath} did not contain a valid mode, falling back to default.");
                 QuarantineCorruptFile();
