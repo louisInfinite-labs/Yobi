@@ -86,7 +86,12 @@ def main() -> int:
             # manually with the original-language name first (e.g. "葛葉" before "Kuzuha"),
             # but the checkpoint only ever recorded the english_name-preferring resolved
             # string, so checking names[0] alone missed a real match sitting under names[1].
-            channel_id = next((name_to_channel_id[n] for n in creator["names"] if n in name_to_channel_id), None)
+            channel_id, matched_via = None, None
+            for n in creator["names"]:
+                if n in name_to_channel_id:
+                    channel_id, matched_via = name_to_channel_id[n], n
+                    break
+
             if not channel_id:
                 progress[creator_id] = {"skipped": "no_channel_id_found"}
                 continue
@@ -102,6 +107,23 @@ def main() -> int:
                 continue
             except (urllib.error.URLError, TimeoutError) as exc:
                 print(f"[WARN] {creator_id} ({channel_id}): network failure: {exc}", file=sys.stderr)
+                time.sleep(REQUEST_DELAY_SECONDS)
+                continue
+
+            # Sanity check, not just a length check: collaborator_names/collaborator_channel_ids
+            # are built from two independently-filtered lists over the same mentions (see
+            # holodex_collab_collector.py), so even equal list lengths don't prove correct
+            # positional pairing - a mention with only a name and another with only an id can
+            # produce equal-length lists that pair the wrong two together. Confirming the name
+            # we searched for actually appears in what Holodex returns for that channel_id
+            # catches a wrong pairing before it attaches one creator's data to another.
+            returned_names = [n.lower() for n in (info.get("name") or "", info.get("english_name") or "") if n]
+            matched_lower = matched_via.lower()
+            if not any(matched_lower in rn or rn in matched_lower for rn in returned_names):
+                print(f"[WARN] {creator_id}: '{matched_via}' -> {channel_id} returned {returned_names!r}, "
+                      f"no overlap - likely a name/id pairing bug upstream, skipping", file=sys.stderr)
+                progress[creator_id] = {"skipped": "name_channel_mismatch"}
+                PROGRESS_PATH.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
                 time.sleep(REQUEST_DELAY_SECONDS)
                 continue
 
