@@ -27,6 +27,14 @@ namespace Yobi.EditorTools
             {
                 panelBehaviour = existingPanelBehaviour;
                 panelGo = existingPanelBehaviour.gameObject;
+
+                // Unlike CreatorSearchUISetup (which deliberately leaves an existing panel's
+                // position untouched so manual repositioning survives a rerun), this tool
+                // re-applies position/size every run. This is a debug-only UI nobody hand-tunes,
+                // and the alternative already bit once: a position/size fix landed in code but
+                // silently never reached a panel instance created before the fix, because
+                // rerunning the tool only rebuilt its children, not the panel transform itself.
+                ApplyPanelLayout(panelGo.GetComponent<RectTransform>());
             }
             else
             {
@@ -106,20 +114,24 @@ namespace Yobi.EditorTools
             }
         }
 
-        private static GameObject CreatePanel(Transform parent)
+        private static void ApplyPanelLayout(RectTransform rect)
         {
-            var panelGo = new GameObject("AiQueryPanel", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-            panelGo.transform.SetParent(parent, false);
-
             // Bottom-right, narrower than CreatorSearchPanel's 420px top-left panel - the two
             // used to both claim ~420px in an 800px-wide reference resolution and visibly
             // overlapped in the middle of the screen.
-            var rect = panelGo.GetComponent<RectTransform>();
             rect.anchorMin = new Vector2(1f, 0f);
             rect.anchorMax = new Vector2(1f, 0f);
             rect.pivot = new Vector2(1f, 0f);
             rect.anchoredPosition = new Vector2(-20f, 20f);
             rect.sizeDelta = new Vector2(300f, 0f);
+        }
+
+        private static GameObject CreatePanel(Transform parent)
+        {
+            var panelGo = new GameObject("AiQueryPanel", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+            panelGo.transform.SetParent(parent, false);
+
+            ApplyPanelLayout(panelGo.GetComponent<RectTransform>());
 
             panelGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.55f);
 
