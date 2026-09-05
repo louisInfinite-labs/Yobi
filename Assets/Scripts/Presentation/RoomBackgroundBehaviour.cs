@@ -23,6 +23,10 @@ namespace Yobi.Presentation
         private bool _hasWallpaper;
         private bool _visibilityRequested;
 
+        // Tracked so a newly-loaded wallpaper's predecessor (both the runtime Sprite and its
+        // backing Texture2D) can be released instead of leaking one of each on every pick.
+        private Sprite _wallpaperSprite;
+
         private IRoomWallpaperRepository _repository;
 
         private IRoomWallpaperRepository Repository =>
@@ -67,6 +71,11 @@ namespace Yobi.Presentation
 
         private bool LoadAndApply(string imageFilePath)
         {
+            if (backgroundImage == null)
+            {
+                return false;
+            }
+
             byte[] bytes;
             try
             {
@@ -81,18 +90,41 @@ namespace Yobi.Presentation
             var texture = new Texture2D(2, 2);
             if (!texture.LoadImage(bytes))
             {
+                Destroy(texture);
                 Debug.LogError($"[RoomBackgroundBehaviour] {imageFilePath} is not a readable image.");
                 return false;
             }
 
-            if (backgroundImage != null)
+            var previousSprite = _wallpaperSprite;
+            _wallpaperSprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+            backgroundImage.sprite = _wallpaperSprite;
+
+            // The Sprite doesn't own the Texture2D it wraps, so destroying the sprite alone
+            // would leave its backing texture allocated - both need to go.
+            if (previousSprite != null)
             {
-                backgroundImage.sprite = Sprite.Create(texture, new Rect(0, 0, texture.width, texture.height), new Vector2(0.5f, 0.5f));
+                if (previousSprite.texture != null)
+                {
+                    Destroy(previousSprite.texture);
+                }
+                Destroy(previousSprite);
             }
 
             _hasWallpaper = true;
             UpdateImageEnabled();
             return true;
+        }
+
+        private void OnDestroy()
+        {
+            if (_wallpaperSprite != null)
+            {
+                if (_wallpaperSprite.texture != null)
+                {
+                    Destroy(_wallpaperSprite.texture);
+                }
+                Destroy(_wallpaperSprite);
+            }
         }
 
         private void UpdateImageEnabled()
