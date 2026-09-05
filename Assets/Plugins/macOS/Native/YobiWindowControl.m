@@ -117,6 +117,51 @@ void Yobi_GetWindowPosition(double *outX, double *outY)
     }
 }
 
+// Picks a single real screen to clamp against, rather than the bounding union of every screen:
+// vertically or diagonally offset displays leave gaps inside that union's rectangle, and a
+// saved position landing in such a gap would pass a union-based clamp while still placing the
+// whole window outside of every actual display. Prefers whichever screen the proposed window
+// rect overlaps most; if none overlap at all (e.g. the gap itself, or a disconnected monitor),
+// falls back to whichever screen's center is nearest.
+static NSScreen *Yobi_FindScreenForPosition(double x, double y, CGFloat width, CGFloat height)
+{
+    NSArray<NSScreen *> *screens = [NSScreen screens];
+    if (screens.count == 0) {
+        return nil;
+    }
+
+    NSRect proposedFrame = NSMakeRect(x, y, width, height);
+
+    NSScreen *bestOverlap = nil;
+    CGFloat bestOverlapArea = 0;
+    for (NSScreen *screen in screens) {
+        NSRect intersection = NSIntersectionRect(proposedFrame, screen.visibleFrame);
+        CGFloat area = intersection.size.width * intersection.size.height;
+        if (area > bestOverlapArea) {
+            bestOverlapArea = area;
+            bestOverlap = screen;
+        }
+    }
+    if (bestOverlap != nil) {
+        return bestOverlap;
+    }
+
+    NSScreen *nearest = screens.firstObject;
+    CGFloat nearestDistanceSquared = CGFLOAT_MAX;
+    NSPoint proposedCenter = NSMakePoint(x + width / 2.0, y + height / 2.0);
+    for (NSScreen *screen in screens) {
+        NSPoint screenCenter = NSMakePoint(NSMidX(screen.visibleFrame), NSMidY(screen.visibleFrame));
+        CGFloat dx = screenCenter.x - proposedCenter.x;
+        CGFloat dy = screenCenter.y - proposedCenter.y;
+        CGFloat distanceSquared = dx * dx + dy * dy;
+        if (distanceSquared < nearestDistanceSquared) {
+            nearestDistanceSquared = distanceSquared;
+            nearest = screen;
+        }
+    }
+    return nearest;
+}
+
 void Yobi_SetWindowPositionClamped(double x, double y)
 {
     NSWindow *window = Yobi_FindMainWindow();
@@ -125,24 +170,19 @@ void Yobi_SetWindowPositionClamped(double x, double y)
     }
 
     NSRect frame = window.frame;
+    NSScreen *targetScreen = Yobi_FindScreenForPosition(x, y, frame.size.width, frame.size.height);
 
-    // Union of every connected screen's visible frame - keeps a position saved from a monitor
-    // that is no longer connected (or is smaller than before) from placing the window off of
-    // any visible desktop space.
-    NSRect unionFrame = NSZeroRect;
-    for (NSScreen *screen in [NSScreen screens]) {
-        unionFrame = NSUnionRect(unionFrame, screen.visibleFrame);
-    }
+    if (targetScreen != nil) {
+        NSRect visibleFrame = targetScreen.visibleFrame;
 
-    if (!NSIsEmptyRect(unionFrame)) {
-        CGFloat minX = unionFrame.origin.x;
-        CGFloat minY = unionFrame.origin.y;
-        CGFloat maxX = unionFrame.origin.x + unionFrame.size.width - frame.size.width;
-        CGFloat maxY = unionFrame.origin.y + unionFrame.size.height - frame.size.height;
+        CGFloat minX = visibleFrame.origin.x;
+        CGFloat minY = visibleFrame.origin.y;
+        CGFloat maxX = visibleFrame.origin.x + visibleFrame.size.width - frame.size.width;
+        CGFloat maxY = visibleFrame.origin.y + visibleFrame.size.height - frame.size.height;
 
         // maxX/maxY can end up below minX/minY when the window is wider/taller than the
-        // available desktop space - clamp toward the lower bound rather than produce an
-        // inverted (and effectively arbitrary) range.
+        // target screen - clamp toward the lower bound rather than produce an inverted (and
+        // effectively arbitrary) range.
         if (maxX < minX) {
             maxX = minX;
         }

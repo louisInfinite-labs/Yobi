@@ -26,7 +26,14 @@ namespace Yobi.Infrastructure.Storage
             try
             {
                 var json = File.ReadAllText(_filePath);
-                dto = JsonUtility.FromJson<WindowPositionDto>(json);
+
+                // JsonUtility.FromJson leaves fields the JSON doesn't mention at whatever value
+                // the object already had - it never reports "this field was missing". Seeding
+                // both fields with NaN before overwriting, then checking for NaN afterward, is
+                // what actually distinguishes an incomplete record (e.g. `{}` or `{"x":42}`,
+                // which would otherwise silently read back as x/y = 0) from a real, valid one.
+                dto = new WindowPositionDto { x = double.NaN, y = double.NaN };
+                JsonUtility.FromJsonOverwrite(json, dto);
             }
             catch (Exception ex)
             {
@@ -38,9 +45,9 @@ namespace Yobi.Infrastructure.Storage
                 return null;
             }
 
-            if (dto == null)
+            if (double.IsNaN(dto.x) || double.IsNaN(dto.y))
             {
-                Debug.LogError($"[LocalFileWindowPositionRepository] {_filePath} did not deserialize to a valid position, ignoring.");
+                Debug.LogError($"[LocalFileWindowPositionRepository] {_filePath} is missing x/y, ignoring saved position.");
                 QuarantineCorruptFile();
                 return null;
             }
