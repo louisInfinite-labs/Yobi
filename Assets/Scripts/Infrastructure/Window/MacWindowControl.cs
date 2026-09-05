@@ -15,6 +15,12 @@ namespace Yobi.Infrastructure.Window
         [DllImport(PluginName)]
         private static extern void Yobi_SetWindowAlwaysOnTop(bool alwaysOnTop);
 
+        [DllImport(PluginName)]
+        private static extern void Yobi_SetWindowVisible(bool visible);
+
+        [DllImport(PluginName)]
+        private static extern bool Yobi_IsWindowVisible();
+
         public static void MakeTransparent()
         {
             Yobi_MakeWindowTransparent();
@@ -23,6 +29,16 @@ namespace Yobi.Infrastructure.Window
         public static void SetAlwaysOnTop(bool alwaysOnTop)
         {
             Yobi_SetWindowAlwaysOnTop(alwaysOnTop);
+        }
+
+        public static void SetVisible(bool visible)
+        {
+            Yobi_SetWindowVisible(visible);
+        }
+
+        public static bool IsVisible()
+        {
+            return Yobi_IsWindowVisible();
         }
     }
 }

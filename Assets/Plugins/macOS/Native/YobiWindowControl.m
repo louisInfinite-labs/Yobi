@@ -7,16 +7,30 @@
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
 
+// Cached once resolved: NSApp.windows can include Unity-internal auxiliary windows (e.g. for
+// text input) beyond the one visible player window. Re-scanning "the first visible window" on
+// every call broke as soon as something else hid the real main window - the scan would then
+// latch onto one of those auxiliary windows instead. Resolving once, while the real window is
+// still the only visible one (during the initial Yobi_MakeWindowTransparent call), and reusing
+// that reference afterward avoids ever being confused by them.
+static NSWindow *gMainWindow = nil;
+
 static NSWindow *Yobi_FindMainWindow(void)
 {
+    if (gMainWindow != nil) {
+        return gMainWindow;
+    }
+
     // Unity doesn't expose its NSWindow via any public API. A plain Standalone Player only
     // ever creates the one window, so the first visible one NSApplication knows about is it.
     for (NSWindow *window in [NSApp windows]) {
         if (window.isVisible) {
+            gMainWindow = window;
             return window;
         }
     }
-    return [NSApp windows].firstObject;
+    gMainWindow = [NSApp windows].firstObject;
+    return gMainWindow;
 }
 
 void Yobi_MakeWindowTransparent(void)
@@ -70,4 +84,23 @@ void Yobi_SetWindowAlwaysOnTop(bool alwaysOnTop)
         return;
     }
     window.level = alwaysOnTop ? NSFloatingWindowLevel : NSNormalWindowLevel;
+}
+
+void Yobi_SetWindowVisible(bool visible)
+{
+    NSWindow *window = Yobi_FindMainWindow();
+    if (window == nil) {
+        return;
+    }
+    if (visible) {
+        [window makeKeyAndOrderFront:nil];
+    } else {
+        [window orderOut:nil];
+    }
+}
+
+bool Yobi_IsWindowVisible(void)
+{
+    NSWindow *window = Yobi_FindMainWindow();
+    return window != nil && window.isVisible;
 }
