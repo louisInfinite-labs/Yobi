@@ -104,3 +104,55 @@ bool Yobi_IsWindowVisible(void)
     NSWindow *window = Yobi_FindMainWindow();
     return window != nil && window.isVisible;
 }
+
+void Yobi_GetWindowPosition(double *outX, double *outY)
+{
+    NSWindow *window = Yobi_FindMainWindow();
+    NSRect frame = window != nil ? window.frame : NSZeroRect;
+    if (outX != NULL) {
+        *outX = frame.origin.x;
+    }
+    if (outY != NULL) {
+        *outY = frame.origin.y;
+    }
+}
+
+void Yobi_SetWindowPositionClamped(double x, double y)
+{
+    NSWindow *window = Yobi_FindMainWindow();
+    if (window == nil) {
+        return;
+    }
+
+    NSRect frame = window.frame;
+
+    // Union of every connected screen's visible frame - keeps a position saved from a monitor
+    // that is no longer connected (or is smaller than before) from placing the window off of
+    // any visible desktop space.
+    NSRect unionFrame = NSZeroRect;
+    for (NSScreen *screen in [NSScreen screens]) {
+        unionFrame = NSUnionRect(unionFrame, screen.visibleFrame);
+    }
+
+    if (!NSIsEmptyRect(unionFrame)) {
+        CGFloat minX = unionFrame.origin.x;
+        CGFloat minY = unionFrame.origin.y;
+        CGFloat maxX = unionFrame.origin.x + unionFrame.size.width - frame.size.width;
+        CGFloat maxY = unionFrame.origin.y + unionFrame.size.height - frame.size.height;
+
+        // maxX/maxY can end up below minX/minY when the window is wider/taller than the
+        // available desktop space - clamp toward the lower bound rather than produce an
+        // inverted (and effectively arbitrary) range.
+        if (maxX < minX) {
+            maxX = minX;
+        }
+        if (maxY < minY) {
+            maxY = minY;
+        }
+
+        x = MAX(minX, MIN(x, maxX));
+        y = MAX(minY, MIN(y, maxY));
+    }
+
+    [window setFrameOrigin:NSMakePoint(x, y)];
+}

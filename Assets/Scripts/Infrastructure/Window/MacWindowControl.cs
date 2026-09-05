@@ -25,6 +25,12 @@ namespace Yobi.Infrastructure.Window
         [return: MarshalAs(UnmanagedType.I1)]
         private static extern bool Yobi_IsWindowVisible();
 
+        [DllImport(PluginName)]
+        private static extern void Yobi_GetWindowPosition(out double x, out double y);
+
+        [DllImport(PluginName)]
+        private static extern void Yobi_SetWindowPositionClamped(double x, double y);
+
         public static void MakeTransparent()
         {
             Yobi_MakeWindowTransparent();
@@ -43,6 +49,16 @@ namespace Yobi.Infrastructure.Window
         public static bool IsVisible()
         {
             return Yobi_IsWindowVisible();
+        }
+
+        public static void GetPosition(out double x, out double y)
+        {
+            Yobi_GetWindowPosition(out x, out y);
+        }
+
+        public static void SetPositionClamped(double x, double y)
+        {
+            Yobi_SetWindowPositionClamped(x, y);
         }
     }
 }
