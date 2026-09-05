@@ -112,7 +112,16 @@ namespace Yobi.Presentation
             }
 
             _queryHistory.Add(query, MaxHistoryEntries);
-            _queryHistoryRepository.Save(_queryHistory);
+            try
+            {
+                _queryHistoryRepository.Save(_queryHistory);
+            }
+            catch (Exception ex)
+            {
+                // History is a nice-to-have, not load-bearing - a full disk or permissions
+                // problem here must not stop the actual search/AI answer below from happening.
+                Debug.LogError($"[MainSearchBar] Failed to save query history: {ex.Message}");
+            }
 
             _requestCts?.Cancel();
             _requestCts?.Dispose();
@@ -138,8 +147,17 @@ namespace Yobi.Presentation
                 }
             }
 
+            // Cancelling _requestCts above doesn't guarantee the awaits below actually observe
+            // it before completing - a stale request can still win the race and reach here after
+            // a newer one has already started, so each terminal render is guarded once more
+            // immediately before it runs.
             if (searchResults.Count > 0)
             {
+                if (requestToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 ShowMatches(searchResults);
                 return;
             }
@@ -151,6 +169,12 @@ namespace Yobi.Presentation
             {
                 var result = await _queryUseCase.AskAsync(query, requestToken);
                 tickerCts.Cancel();
+
+                if (requestToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 ShowAnswer(result.Answer);
             }
             catch (OperationCanceledException)
@@ -161,6 +185,12 @@ namespace Yobi.Presentation
             catch (Exception ex)
             {
                 tickerCts.Cancel();
+
+                if (requestToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
                 ShowAnswer("查詢失敗,check下Ollama有冇跑緊。");
                 Debug.LogError($"[MainSearchBar] Query failed: {ex.Message}");
             }
