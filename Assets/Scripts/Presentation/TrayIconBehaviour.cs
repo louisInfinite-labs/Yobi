@@ -1,12 +1,13 @@
 using AOT;
 using UnityEngine;
+using Yobi.Domain.Entities;
 using Yobi.Infrastructure.Tray;
 using Yobi.Infrastructure.Window;
 
 namespace Yobi.Presentation
 {
-    // Adds a menu bar icon with Show/Hide and Quit, so the desktop companion window can be
-    // reached even before it has an actual clickable character (roadmap Phase 3).
+    // Adds a menu bar icon with Show/Hide, mode switching, and Quit, so the desktop companion
+    // window can be reached even before it has an actual clickable character (roadmap Phase 3).
     public sealed class TrayIconBehaviour : MonoBehaviour
     {
         // Rooted here so the GC can't collect it: native code only holds the raw function
@@ -15,6 +16,10 @@ namespace Yobi.Presentation
         private static readonly MacTrayIconControl.TrayActionCallback CallbackDelegate = OnTrayAction;
 
         private static bool _callbackRegistered;
+
+        // The callback is static (required for MonoPInvokeCallback), so it needs a static
+        // handle to the window it's acting on rather than an instance reference.
+        private static DesktopCompanionWindowBehaviour _companionWindow;
 
         private void Awake()
         {
@@ -25,6 +30,8 @@ namespace Yobi.Presentation
                 return;
             }
 
+            _companionWindow = FindFirstObjectByType<DesktopCompanionWindowBehaviour>();
+
             if (!_callbackRegistered)
             {
                 MacTrayIconControl.SetActionCallback(CallbackDelegate);
@@ -32,6 +39,11 @@ namespace Yobi.Presentation
             }
 
             MacTrayIconControl.Create();
+
+            if (_companionWindow != null)
+            {
+                MacTrayIconControl.SetToggleModeMenuTitle(DescribeToggleTarget(_companionWindow.CurrentMode));
+            }
         }
 
         private void OnApplicationQuit()
@@ -54,10 +66,24 @@ namespace Yobi.Presentation
                 case "toggle_visibility":
                     MacWindowControl.SetVisible(!MacWindowControl.IsVisible());
                     break;
+                case "toggle_mode":
+                    if (_companionWindow != null)
+                    {
+                        var newMode = _companionWindow.ToggleMode();
+                        MacTrayIconControl.SetToggleModeMenuTitle(DescribeToggleTarget(newMode));
+                    }
+                    break;
                 case "quit":
                     UnityEngine.Application.Quit();
                     break;
             }
+        }
+
+        // The menu item names the mode switching *to*, not the one currently active - e.g.
+        // while in DesktopMate mode, it reads "Switch to Room Mode".
+        private static string DescribeToggleTarget(CompanionMode currentMode)
+        {
+            return currentMode == CompanionMode.DesktopMate ? "Switch to Room Mode" : "Switch to Desktop Mate Mode";
         }
     }
 }

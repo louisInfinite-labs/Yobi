@@ -1,5 +1,6 @@
 using System.Collections;
 using UnityEngine;
+using Yobi.Application.UseCases;
 using Yobi.Domain.Entities;
 using Yobi.Domain.Interfaces;
 using Yobi.Infrastructure.Storage;
@@ -7,25 +8,35 @@ using Yobi.Infrastructure.Window;
 
 namespace Yobi.Presentation
 {
-    // Turns Yobi's window into a borderless, transparent, (optionally) always-on-top overlay -
-    // the foundation for a Desktop Mate-style character companion (roadmap Phase 3, "Desktop
-    // Companion 功能"). Dragging the character and click-through for non-character pixels are
-    // separate, not-yet-implemented follow-ups.
+    // Owns the desktop companion window's two modes (roadmap Phase 3, "Desktop Companion 功能"):
+    // DesktopMate - a borderless, transparent, always-on-top overlay, just the character
+    // floating over the desktop; and Room - a normal-sized, resizable, opaque window showing the
+    // character in a customizable scene. Dragging the character, click-through for non-character
+    // pixels, and the Room scene's own content (wallpaper, surrounding UI) are separate,
+    // not-yet-implemented follow-ups - this only handles the native window style switch itself.
     public sealed class DesktopCompanionWindowBehaviour : MonoBehaviour
     {
         // Unity (re)creates its macOS CAMetalLayer as the graphics surface comes up, which can
         // happen after Awake and undoes the native opaque=NO fix applied too early. Reapplying
         // for the first few frames catches that recreation without needing a lower-level
-        // render-thread hook.
+        // render-thread hook. Reused whenever (re-)entering DesktopMate mode, not just at
+        // startup, since it's cheap and it's simpler to have one path handle both.
         private const int ReapplyFrameCount = 30;
-
-        [SerializeField]
-        private bool alwaysOnTop = true;
 
         [SerializeField]
         private Camera targetCamera;
 
         private IWindowPositionRepository _windowPositionRepository;
+        private SwitchCompanionModeUseCase _switchModeUseCase;
+        private Coroutine _desktopMateStyleCoroutine;
+
+        // Lazy rather than assigned in Awake(): TrayIconBehaviour reads CurrentMode from its
+        // own Awake() to label the tray menu, and Unity doesn't guarantee Awake() order across
+        // different GameObjects - this must work correctly regardless of which one runs first.
+        private SwitchCompanionModeUseCase SwitchModeUseCase =>
+            _switchModeUseCase ??= new SwitchCompanionModeUseCase(new LocalFileCompanionModeRepository(), CompanionMode.DesktopMate);
+
+        public CompanionMode CurrentMode => SwitchModeUseCase.CurrentMode;
 
         private void Awake()
         {
@@ -36,16 +47,6 @@ namespace Yobi.Presentation
                 targetCamera = Camera.main;
             }
 
-            if (targetCamera != null)
-            {
-                // Alpha 0 so anything the character doesn't cover renders as fully
-                // transparent instead of a solid color, once the native side also makes the
-                // window itself see-through (Unity's own render target is opaque by default
-                // regardless of this - see YobiWindowControl.m).
-                targetCamera.clearFlags = CameraClearFlags.SolidColor;
-                targetCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
-            }
-
             // OSXPlayer only, never OSXEditor: in the Editor, Play mode renders inside the
             // Game view panel docked in the Editor's own window - there is no separate
             // "player window" to find. YobiWindowControl.m's window search would instead grab
@@ -54,7 +55,7 @@ namespace Yobi.Presentation
             if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer)
             {
                 RestoreWindowPosition();
-                StartCoroutine(ApplyWindowSettingsOverFirstFrames());
+                ApplyMode(SwitchModeUseCase.CurrentMode);
             }
         }
 
@@ -69,6 +70,58 @@ namespace Yobi.Presentation
             _windowPositionRepository.Save(new WindowPosition(x, y));
         }
 
+        // Called from TrayIconBehaviour's menu action. Returns the new mode so the caller can
+        // update the menu label without needing its own copy of the current mode.
+        public CompanionMode ToggleMode()
+        {
+            if (UnityEngine.Application.platform != RuntimePlatform.OSXPlayer)
+            {
+                return SwitchModeUseCase.CurrentMode;
+            }
+
+            var newMode = SwitchModeUseCase.Toggle();
+            ApplyMode(newMode);
+            return newMode;
+        }
+
+        private void ApplyMode(CompanionMode mode)
+        {
+            // Stop any in-flight reapply loop from a previous DesktopMate entry first - without
+            // this, switching to Room while it's still running would let its remaining frames
+            // call MakeTransparent()/SetAlwaysOnTop(true) after ApplyRoomStyle(), undoing it.
+            if (_desktopMateStyleCoroutine != null)
+            {
+                StopCoroutine(_desktopMateStyleCoroutine);
+                _desktopMateStyleCoroutine = null;
+            }
+
+            if (mode == CompanionMode.DesktopMate)
+            {
+                if (targetCamera != null)
+                {
+                    // Alpha 0 so anything the character doesn't cover renders as fully
+                    // transparent instead of a solid color, once the native side also makes the
+                    // window itself see-through (Unity's own render target is opaque by default
+                    // regardless of this - see YobiWindowControl.m).
+                    targetCamera.clearFlags = CameraClearFlags.SolidColor;
+                    targetCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                }
+                _desktopMateStyleCoroutine = StartCoroutine(ApplyDesktopMateStyleOverFirstFrames());
+            }
+            else
+            {
+                if (targetCamera != null)
+                {
+                    // Placeholder solid background until the Room scene's own customizable
+                    // wallpaper rendering lands.
+                    targetCamera.clearFlags = CameraClearFlags.SolidColor;
+                    targetCamera.backgroundColor = Color.black;
+                }
+                MacWindowControl.ApplyRoomStyle();
+                MacWindowControl.SetAlwaysOnTop(false);
+            }
+        }
+
         private void RestoreWindowPosition()
         {
             var saved = _windowPositionRepository.Load();
@@ -80,12 +133,12 @@ namespace Yobi.Presentation
             }
         }
 
-        private IEnumerator ApplyWindowSettingsOverFirstFrames()
+        private IEnumerator ApplyDesktopMateStyleOverFirstFrames()
         {
             for (int frame = 0; frame < ReapplyFrameCount; frame++)
             {
                 MacWindowControl.MakeTransparent();
-                MacWindowControl.SetAlwaysOnTop(alwaysOnTop);
+                MacWindowControl.SetAlwaysOnTop(true);
                 yield return null;
             }
         }

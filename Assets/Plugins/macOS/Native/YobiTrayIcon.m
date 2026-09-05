@@ -1,6 +1,6 @@
 // Adds a menu bar (status bar) icon with a small menu for controlling the desktop companion
-// window - "Show/Hide" and "Quit" - so there is a way to reach the window before the actual
-// clickable character (roadmap Phase 3) exists.
+// window - "Show/Hide", switching between DesktopMate/Room mode, and "Quit" - so there is a way
+// to reach the window before the actual clickable character (roadmap Phase 3) exists.
 //
 // Rebuild with: Assets/Plugins/macOS/Native/build_tray_icon.sh
 
@@ -10,12 +10,14 @@ typedef void (*YobiTrayActionCallback)(const char *action);
 
 @interface YobiTrayMenuTarget : NSObject
 - (void)onToggleVisibility:(id)sender;
+- (void)onToggleMode:(id)sender;
 - (void)onQuit:(id)sender;
 @end
 
 static NSStatusItem *gStatusItem = nil;
 static YobiTrayMenuTarget *gMenuTarget = nil;
 static YobiTrayActionCallback gCallback = NULL;
+static NSMenuItem *gToggleModeItem = nil;
 
 @implementation YobiTrayMenuTarget
 
@@ -23,6 +25,13 @@ static YobiTrayActionCallback gCallback = NULL;
 {
     if (gCallback != NULL) {
         gCallback("toggle_visibility");
+    }
+}
+
+- (void)onToggleMode:(id)sender
+{
+    if (gCallback != NULL) {
+        gCallback("toggle_mode");
     }
 }
 
@@ -59,6 +68,14 @@ void Yobi_CreateTrayIcon(void)
     toggleItem.target = gMenuTarget;
     [menu addItem:toggleItem];
 
+    // Title is set for real right after creation via Yobi_SetToggleModeMenuTitle, once the
+    // caller knows which mode was actually restored from disk.
+    gToggleModeItem = [[NSMenuItem alloc] initWithTitle:@"Switch Mode"
+                                                  action:@selector(onToggleMode:)
+                                           keyEquivalent:@""];
+    gToggleModeItem.target = gMenuTarget;
+    [menu addItem:gToggleModeItem];
+
     [menu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem *quitItem = [[NSMenuItem alloc] initWithTitle:@"Quit Yobi"
@@ -70,6 +87,14 @@ void Yobi_CreateTrayIcon(void)
     gStatusItem.menu = menu;
 }
 
+void Yobi_SetToggleModeMenuTitle(const char *title)
+{
+    if (gToggleModeItem == nil || title == NULL) {
+        return;
+    }
+    gToggleModeItem.title = [NSString stringWithUTF8String:title];
+}
+
 void Yobi_RemoveTrayIcon(void)
 {
     if (gStatusItem != nil) {
@@ -77,4 +102,5 @@ void Yobi_RemoveTrayIcon(void)
         gStatusItem = nil;
     }
     gMenuTarget = nil;
+    gToggleModeItem = nil;
 }
