@@ -9,6 +9,11 @@ namespace Yobi.Presentation
     // reached even before it has an actual clickable character (roadmap Phase 3).
     public sealed class TrayIconBehaviour : MonoBehaviour
     {
+        // Rooted here so the GC can't collect it: native code only holds the raw function
+        // pointer marshalled from this delegate instance, which wouldn't keep it alive on the
+        // managed side by itself.
+        private static readonly MacTrayIconControl.TrayActionCallback CallbackDelegate = OnTrayAction;
+
         private static bool _callbackRegistered;
 
         private void Awake()
@@ -22,7 +27,7 @@ namespace Yobi.Presentation
 
             if (!_callbackRegistered)
             {
-                MacTrayIconControl.SetActionCallback(OnTrayAction);
+                MacTrayIconControl.SetActionCallback(CallbackDelegate);
                 _callbackRegistered = true;
             }
 
