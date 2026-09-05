@@ -125,8 +125,12 @@ namespace Yobi.Presentation
             _reminderConfiguration = _reminderConfigurationRepository.Load(defaultReminderConfiguration);
 
             // Pre-scheduled OS notifications (Yobi_* native calls) only exist for macOS - other
-            // platforms simply keep the console-only reminder path until Phase 4 cross-platform work.
-            if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer || UnityEngine.Application.platform == RuntimePlatform.OSXEditor)
+            // platforms simply keep the console-only reminder path until Phase 4 cross-platform
+            // work. Also gated on the Settings modal's "Other" tab toggle - checked once here
+            // (takes effect on next launch, not live) rather than threading a live subscription
+            // through this already-large Awake().
+            var notificationsEnabled = new LocalFileAppSettingsRepository().Load(new AppSettings("zh-TW", Screen.currentResolution.width, Screen.currentResolution.height, Screen.fullScreen, false, 1f, true)).NotificationsEnabled;
+            if (notificationsEnabled && (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer || UnityEngine.Application.platform == RuntimePlatform.OSXEditor))
             {
                 var scheduler = new MacNotificationScheduler();
                 scheduler.RequestAuthorization();
