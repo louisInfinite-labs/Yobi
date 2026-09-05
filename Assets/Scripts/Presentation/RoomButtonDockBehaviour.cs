@@ -35,13 +35,9 @@ namespace Yobi.Presentation
         private GameObject aiQueryPanel;
 
         private DesktopCompanionWindowBehaviour _companionWindow;
+        private CanvasGroup _creatorSearchPanelGroup;
+        private CanvasGroup _aiQueryPanelGroup;
 
-        // Start(), not Awake(): Unity guarantees every active object's Awake() has already run
-        // before any Start() runs. Deactivating creatorSearchPanel/aiQueryPanel here relies on
-        // that - doing it from Awake() would race whichever of those two scripts' own Awake()
-        // Unity happens to call first (unspecified without an explicit Script Execution Order),
-        // risking disabling the GameObject before its own Awake() (which sets up its use cases)
-        // ever ran.
         private void Start()
         {
             _companionWindow = FindFirstObjectByType<DesktopCompanionWindowBehaviour>();
@@ -49,37 +45,37 @@ namespace Yobi.Presentation
 
             if (creatorSearchPanel == null)
             {
-                var searchPanel = FindFirstObjectByType<CreatorSearchPanelBehaviour>(FindObjectsInactive.Include);
+                var searchPanel = FindFirstObjectByType<CreatorSearchPanelBehaviour>();
                 creatorSearchPanel = searchPanel != null ? searchPanel.gameObject : null;
             }
 
             if (aiQueryPanel == null)
             {
-                var aiPanel = FindFirstObjectByType<AiQueryPanelBehaviour>(FindObjectsInactive.Include);
+                var aiPanel = FindFirstObjectByType<AiQueryPanelBehaviour>();
                 aiQueryPanel = aiPanel != null ? aiPanel.gameObject : null;
             }
 
             // These debug panels used to always be visible, overlapping the Room UI's clock and
-            // button dock. Now that these buttons exist specifically to toggle them, default to
-            // hidden until opened on demand instead of cluttering the screen unconditionally.
-            if (creatorSearchPanel != null)
-            {
-                creatorSearchPanel.SetActive(false);
-            }
-
-            if (aiQueryPanel != null)
-            {
-                aiQueryPanel.SetActive(false);
-            }
+            // button dock. Hidden by default and toggled on demand via the Search/AI buttons
+            // instead - but via a CanvasGroup (alpha/interactable/blocksRaycasts), never
+            // GameObject.SetActive(false). Deactivating the whole GameObject would stop its
+            // MonoBehaviour's own Start() from ever running if this runs first (Unity doesn't
+            // guarantee Start() order across different objects, only that every Awake() runs
+            // before any Start()) - which would permanently skip CreatorSearchPanelBehaviour's
+            // polling loop, and would make it invisible to any *other* script's plain
+            // FindFirstObjectByType call (default excludes inactive objects), such as
+            // RoomReminderListBehaviour subscribing to its WatchlistStatusUpdated event.
+            _creatorSearchPanelGroup = EnsureHiddenViaCanvasGroup(creatorSearchPanel);
+            _aiQueryPanelGroup = EnsureHiddenViaCanvasGroup(aiQueryPanel);
 
             if (searchToggleButton != null)
             {
-                searchToggleButton.onClick.AddListener(() => TogglePanel(creatorSearchPanel));
+                searchToggleButton.onClick.AddListener(() => TogglePanel(_creatorSearchPanelGroup));
             }
 
             if (aiQueryToggleButton != null)
             {
-                aiQueryToggleButton.onClick.AddListener(() => TogglePanel(aiQueryPanel));
+                aiQueryToggleButton.onClick.AddListener(() => TogglePanel(_aiQueryPanelGroup));
             }
 
             if (wallpaperButton != null)
@@ -93,12 +89,36 @@ namespace Yobi.Presentation
             }
         }
 
-        private static void TogglePanel(GameObject panel)
+        private static CanvasGroup EnsureHiddenViaCanvasGroup(GameObject panel)
         {
-            if (panel != null)
+            if (panel == null)
             {
-                panel.SetActive(!panel.activeSelf);
+                return null;
             }
+
+            var group = panel.GetComponent<CanvasGroup>();
+            if (group == null)
+            {
+                group = panel.AddComponent<CanvasGroup>();
+            }
+
+            SetGroupVisible(group, false);
+            return group;
+        }
+
+        private static void TogglePanel(CanvasGroup group)
+        {
+            if (group != null)
+            {
+                SetGroupVisible(group, group.alpha < 0.5f);
+            }
+        }
+
+        private static void SetGroupVisible(CanvasGroup group, bool visible)
+        {
+            group.alpha = visible ? 1f : 0f;
+            group.interactable = visible;
+            group.blocksRaycasts = visible;
         }
 
         private void OnWallpaperButtonClicked()
