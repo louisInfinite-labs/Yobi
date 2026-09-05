@@ -11,9 +11,9 @@ namespace Yobi.Presentation
     // Owns the desktop companion window's two modes (roadmap Phase 3, "Desktop Companion 功能"):
     // DesktopMate - a borderless, transparent, always-on-top overlay, just the character
     // floating over the desktop; and Room - a normal-sized, resizable, opaque window showing the
-    // character in a customizable scene. Dragging the character, click-through for non-character
-    // pixels, and the Room scene's own content (wallpaper, surrounding UI) are separate,
-    // not-yet-implemented follow-ups - this only handles the native window style switch itself.
+    // character in a customizable scene (background wallpaper via RoomBackgroundBehaviour;
+    // surrounding UI panels are a separate, not-yet-implemented follow-up). Dragging the
+    // character and click-through for non-character pixels are also separate follow-ups.
     public sealed class DesktopCompanionWindowBehaviour : MonoBehaviour
     {
         // Unity (re)creates its macOS CAMetalLayer as the graphics surface comes up, which can
@@ -29,6 +29,7 @@ namespace Yobi.Presentation
         private IWindowPositionRepository _windowPositionRepository;
         private SwitchCompanionModeUseCase _switchModeUseCase;
         private Coroutine _desktopMateStyleCoroutine;
+        private RoomBackgroundBehaviour _roomBackground;
 
         // Lazy rather than assigned in Awake(): TrayIconBehaviour reads CurrentMode from its
         // own Awake() to label the tray menu, and Unity doesn't guarantee Awake() order across
@@ -41,6 +42,7 @@ namespace Yobi.Presentation
         private void Awake()
         {
             _windowPositionRepository = new LocalFileWindowPositionRepository();
+            _roomBackground = FindFirstObjectByType<RoomBackgroundBehaviour>();
 
             if (targetCamera == null)
             {
@@ -107,18 +109,20 @@ namespace Yobi.Presentation
                     targetCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
                 }
                 _desktopMateStyleCoroutine = StartCoroutine(ApplyDesktopMateStyleOverFirstFrames());
+                _roomBackground?.SetVisible(false);
             }
             else
             {
                 if (targetCamera != null)
                 {
-                    // Placeholder solid background until the Room scene's own customizable
-                    // wallpaper rendering lands.
+                    // Falls back to plain black behind the wallpaper Image if the user hasn't
+                    // chosen one yet, or RoomBackgroundBehaviour isn't in the scene.
                     targetCamera.clearFlags = CameraClearFlags.SolidColor;
                     targetCamera.backgroundColor = Color.black;
                 }
                 MacWindowControl.ApplyRoomStyle();
                 MacWindowControl.SetAlwaysOnTop(false);
+                _roomBackground?.SetVisible(true);
             }
         }
 

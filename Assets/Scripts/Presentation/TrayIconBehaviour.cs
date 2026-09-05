@@ -1,25 +1,29 @@
 using AOT;
 using UnityEngine;
 using Yobi.Domain.Entities;
+using Yobi.Infrastructure.FilePicker;
 using Yobi.Infrastructure.Tray;
 using Yobi.Infrastructure.Window;
 
 namespace Yobi.Presentation
 {
-    // Adds a menu bar icon with Show/Hide, mode switching, and Quit, so the desktop companion
-    // window can be reached even before it has an actual clickable character (roadmap Phase 3).
+    // Adds a menu bar icon with Show/Hide, mode switching, choosing the Room wallpaper, and
+    // Quit, so the desktop companion window can be reached even before it has an actual
+    // clickable character (roadmap Phase 3).
     public sealed class TrayIconBehaviour : MonoBehaviour
     {
-        // Rooted here so the GC can't collect it: native code only holds the raw function
-        // pointer marshalled from this delegate instance, which wouldn't keep it alive on the
-        // managed side by itself.
+        // Rooted here so the GC can't collect them: native code only holds the raw function
+        // pointers marshalled from these delegate instances, which wouldn't keep them alive on
+        // the managed side by themselves.
         private static readonly MacTrayIconControl.TrayActionCallback CallbackDelegate = OnTrayAction;
+        private static readonly MacFilePicker.FilePickedCallback WallpaperPickedDelegate = OnWallpaperPicked;
 
         private static bool _callbackRegistered;
 
-        // The callback is static (required for MonoPInvokeCallback), so it needs a static
-        // handle to the window it's acting on rather than an instance reference.
+        // The callbacks are static (required for MonoPInvokeCallback), so they need static
+        // handles to the objects they act on rather than instance references.
         private static DesktopCompanionWindowBehaviour _companionWindow;
+        private static RoomBackgroundBehaviour _roomBackground;
 
         private void Awake()
         {
@@ -31,6 +35,7 @@ namespace Yobi.Presentation
             }
 
             _companionWindow = FindFirstObjectByType<DesktopCompanionWindowBehaviour>();
+            _roomBackground = FindFirstObjectByType<RoomBackgroundBehaviour>();
 
             if (!_callbackRegistered)
             {
@@ -55,9 +60,10 @@ namespace Yobi.Presentation
         }
 
         // Unlike MacNotificationScheduler's click callback (which UNUserNotificationCenter can
-        // deliver on a background queue), NSMenu actions are dispatched on the main run loop -
-        // the same thread Unity's Standalone Player pumps its own Update loop on - so it's safe
-        // to call Unity APIs here directly instead of queuing and draining on Update().
+        // deliver on a background queue), NSMenu actions and NSOpenPanel's completion handler
+        // are both dispatched on the main run loop - the same thread Unity's Standalone Player
+        // pumps its own Update loop on - so it's safe to call Unity APIs here directly instead
+        // of queuing and draining on Update().
         [MonoPInvokeCallback(typeof(MacTrayIconControl.TrayActionCallback))]
         private static void OnTrayAction(string action)
         {
@@ -73,9 +79,21 @@ namespace Yobi.Presentation
                         MacTrayIconControl.SetToggleModeMenuTitle(DescribeToggleTarget(newMode));
                     }
                     break;
+                case "choose_wallpaper":
+                    MacFilePicker.ShowImageOpenPanel(WallpaperPickedDelegate);
+                    break;
                 case "quit":
                     UnityEngine.Application.Quit();
                     break;
+            }
+        }
+
+        [MonoPInvokeCallback(typeof(MacFilePicker.FilePickedCallback))]
+        private static void OnWallpaperPicked(string path)
+        {
+            if (_roomBackground != null)
+            {
+                _roomBackground.SetWallpaper(path);
             }
         }
 
