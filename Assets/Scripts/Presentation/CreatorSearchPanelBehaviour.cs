@@ -21,6 +21,11 @@ namespace Yobi.Presentation
     {
         private const float ReminderCheckIntervalSeconds = 5f;
 
+        // Lets other UI (RoomReminderListBehaviour) show the same watchlist statuses without
+        // running its own separate Holodex polling loop, which would otherwise double the
+        // request rate against the same API key/rate limit for no benefit.
+        public event Action<IReadOnlyList<CreatorStatus>> WatchlistStatusUpdated;
+
         [SerializeField]
         private InputField searchInputField;
 
@@ -402,6 +407,7 @@ namespace Yobi.Presentation
                     var statuses = await _creatorStatusUseCase.GetStatusesAsync(identities, isWatchlisted: true, cancellationToken);
 
                     RenderWatchlistRows(statuses);
+                    WatchlistStatusUpdated?.Invoke(statuses);
                     _latestReminderSnapshot = BuildChannelLivestreamResults(statuses);
 
                     _syncScheduledRemindersUseCase?.Sync(_latestReminderSnapshot, _reminderConfiguration.BuildThresholds(), DateTime.UtcNow);
