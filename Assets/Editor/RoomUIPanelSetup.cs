@@ -205,10 +205,15 @@ namespace Yobi.EditorTools
             if (existing != null)
             {
                 dockGo = existing.gameObject;
-                DestroyGeneratedChild(dockGo.transform, "SearchButton");
-                DestroyGeneratedChild(dockGo.transform, "AiQueryButton");
-                DestroyGeneratedChild(dockGo.transform, "WallpaperButton");
-                DestroyGeneratedChild(dockGo.transform, "SwitchModeButton");
+
+                // Destroy every existing child rather than a fixed set of names: an older
+                // version of this tool created flat "SearchButton"/"WallpaperButton"/etc.
+                // children with no "...Container" wrapper, so a name-based cleanup here would
+                // leave those orphaned alongside the newly (re)created ones.
+                for (var i = dockGo.transform.childCount - 1; i >= 0; i--)
+                {
+                    Object.DestroyImmediate(dockGo.transform.GetChild(i).gameObject);
+                }
             }
             else
             {
@@ -232,10 +237,9 @@ namespace Yobi.EditorTools
             layout.childForceExpandHeight = false;
             dockGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var searchButton = CreateCircularButton(dockGo.transform, "SearchButton", "Search");
-            var aiQueryButton = CreateCircularButton(dockGo.transform, "AiQueryButton", "AI");
-            var wallpaperButton = CreateCircularButton(dockGo.transform, "WallpaperButton", "Wall");
-            var switchModeButton = CreateCircularButton(dockGo.transform, "SwitchModeButton", "Mode");
+            var searchButton = RoomButtonDockIconHelper.CreateCircularButtonWithCaption(dockGo.transform, "SearchButton", MaterialIconSearch, "Search", UiFont, IconFont);
+            var aiQueryButton = RoomButtonDockIconHelper.CreateCircularButtonWithCaption(dockGo.transform, "AiQueryButton", MaterialIconChat, "AI", UiFont, IconFont);
+            var switchModeButton = RoomButtonDockIconHelper.CreateCircularButtonWithCaption(dockGo.transform, "SwitchModeButton", MaterialIconSwap, "Mode", UiFont, IconFont);
 
             var behaviour = dockGo.GetComponent<RoomButtonDockBehaviour>();
             if (behaviour == null)
@@ -246,39 +250,20 @@ namespace Yobi.EditorTools
             var so = new SerializedObject(behaviour);
             so.FindProperty("searchToggleButton").objectReferenceValue = searchButton;
             so.FindProperty("aiQueryToggleButton").objectReferenceValue = aiQueryButton;
-            so.FindProperty("wallpaperButton").objectReferenceValue = wallpaperButton;
             so.FindProperty("switchModeButton").objectReferenceValue = switchModeButton;
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
-        // White fill, black border ring, slight transparency - per the reference layout's
-        // buttons blending into the background rather than opaque debug-UI buttons. Built from
-        // two nested Images (border + inset fill) rather than UI Outline, which only draws a
-        // one-directional shadow-like effect, not a ring on all sides.
-        private static Button CreateCircularButton(Transform parent, string name, string label)
-        {
-            var borderGo = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
-            borderGo.transform.SetParent(parent, false);
-            borderGo.GetComponent<RectTransform>().sizeDelta = new Vector2(44f, 44f);
-            borderGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.85f);
+        // Material Icons (Assets/Fonts/MaterialIcons-Regular.ttf, Apache License 2.0) - glyphs
+        // addressed by their standard codepoints rather than the newer "Material Symbols" set,
+        // since this is the older, stable "MaterialIcons-Regular" font.
+        private const string MaterialIconSearch = "\uE8B6";
+        private const string MaterialIconChat = "\uE0B7";
+        private const string MaterialIconSwap = "\uE8D4";
 
-            var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
-            fillGo.transform.SetParent(borderGo.transform, false);
-            SetupStretch(fillGo.GetComponent<RectTransform>(), new Vector2(2f, 2f), new Vector2(-2f, -2f));
-            fillGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.85f);
-
-            var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
-            textGo.transform.SetParent(fillGo.transform, false);
-            var text = textGo.GetComponent<Text>();
-            text.font = UiFont;
-            text.text = label;
-            text.color = Color.black;
-            text.fontSize = 10;
-            text.alignment = TextAnchor.MiddleCenter;
-            SetupStretch(textGo.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero);
-
-            return borderGo.GetComponent<Button>();
-        }
+        private static Font _iconFont;
+        private static Font IconFont =>
+            _iconFont != null ? _iconFont : (_iconFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/MaterialIcons-Regular.ttf"));
 
         private static Text CreateText(Transform parent, string name, string content)
         {
