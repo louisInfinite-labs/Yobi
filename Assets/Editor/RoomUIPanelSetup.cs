@@ -207,6 +207,9 @@ namespace Yobi.EditorTools
                 dockGo = existing.gameObject;
                 DestroyGeneratedChild(dockGo.transform, "SearchButton");
                 DestroyGeneratedChild(dockGo.transform, "AiQueryButton");
+                // ^ Legacy children from before Search/AI moved to MainSearchBarBehaviour - still
+                // destroyed here so a scene built by an older version of this tool gets cleaned up
+                // on rerun, even though nothing (re)creates them below anymore.
                 DestroyGeneratedChild(dockGo.transform, "WallpaperButton");
                 DestroyGeneratedChild(dockGo.transform, "SwitchModeButton");
             }
@@ -232,8 +235,6 @@ namespace Yobi.EditorTools
             layout.childForceExpandHeight = false;
             dockGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var searchButton = CreateCircularButton(dockGo.transform, "SearchButton", "Search");
-            var aiQueryButton = CreateCircularButton(dockGo.transform, "AiQueryButton", "AI");
             var wallpaperButton = CreateCircularButton(dockGo.transform, "WallpaperButton", "Wall");
             var switchModeButton = CreateCircularButton(dockGo.transform, "SwitchModeButton", "Mode");
 
@@ -244,8 +245,6 @@ namespace Yobi.EditorTools
             }
 
             var so = new SerializedObject(behaviour);
-            so.FindProperty("searchToggleButton").objectReferenceValue = searchButton;
-            so.FindProperty("aiQueryToggleButton").objectReferenceValue = aiQueryButton;
             so.FindProperty("wallpaperButton").objectReferenceValue = wallpaperButton;
             so.FindProperty("switchModeButton").objectReferenceValue = switchModeButton;
             so.ApplyModifiedPropertiesWithoutUndo();
