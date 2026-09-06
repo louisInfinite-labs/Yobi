@@ -290,6 +290,27 @@ namespace Yobi.Presentation
         private async void OnSearchIconClicked()
         {
             var query = searchInputField.text;
+
+            // IsSearchEligible's 3-Latin-character/1-CJK-character threshold exists to keep
+            // Holodex search from firing on too-broad a partial match - it has nothing to do with
+            // asking the AI a question, so AI Mode only needs the same plain non-whitespace check
+            // SubmitQuery's own AI branch uses. Checking this first (not after IsSearchEligible)
+            // is what actually lets a short query - even the "hi"-length ones IsSearchEligible
+            // would reject - reach the AI parser when AI Mode is on.
+            if (_aiModeEnabled)
+            {
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    return;
+                }
+
+                _requestCts?.Cancel();
+                _requestCts?.Dispose();
+                _requestCts = new CancellationTokenSource();
+                await RunAiQueryAsync(query, _requestCts.Token);
+                return;
+            }
+
             if (!IsSearchEligible(query))
             {
                 return;
@@ -299,12 +320,6 @@ namespace Yobi.Presentation
             _requestCts?.Dispose();
             _requestCts = new CancellationTokenSource();
             var requestToken = _requestCts.Token;
-
-            if (_aiModeEnabled)
-            {
-                await RunAiQueryAsync(query, requestToken);
-                return;
-            }
 
             if (_searchPanel == null)
             {
