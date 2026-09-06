@@ -207,13 +207,15 @@ namespace Yobi.EditorTools
                 dockGo = existing.gameObject;
 
                 // Destroy every existing child rather than a fixed set of names: an older
-                // version of this tool created flat "SearchButton"/"WallpaperButton"/etc.
-                // children with no "...Container" wrapper, so a name-based cleanup here would
-                // leave those orphaned alongside the newly (re)created ones. "SettingsButtonContainer"
-                // is the one deliberate exception - it's added to this same dock by
-                // SettingsModalUISetup.EnsureSettingsButtonInDock, not by this method, which only
-                // (re)creates Search/AI/Mode below; destroying it here would remove the Settings
-                // modal's only entry point until someone reruns that other tool.
+                // version of this tool created flat "SearchButton"/"AiQueryButton"/
+                // "WallpaperButton"/etc. children with no "...Container" wrapper (Search/AI
+                // moved to MainSearchBarBehaviour's unified search bar, Wallpaper moved into the
+                // Settings modal's Display tab - neither is recreated by this method anymore), so
+                // a name-based cleanup here would leave those orphaned alongside the newly
+                // (re)created ones. "SettingsButtonContainer" is the one deliberate exception -
+                // it's added to this same dock by SettingsModalUISetup.EnsureSettingsButtonInDock,
+                // not by this method, which only (re)creates Mode below; destroying it here would
+                // remove the Settings modal's only entry point until someone reruns that other tool.
                 for (var i = dockGo.transform.childCount - 1; i >= 0; i--)
                 {
                     var child = dockGo.transform.GetChild(i);
@@ -247,8 +249,6 @@ namespace Yobi.EditorTools
             layout.childForceExpandHeight = false;
             dockGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var searchButton = RoomButtonDockIconHelper.CreateCircularButtonWithCaption(dockGo.transform, "SearchButton", MaterialIconSearch, "Search", UiFont, IconFont);
-            var aiQueryButton = RoomButtonDockIconHelper.CreateCircularButtonWithCaption(dockGo.transform, "AiQueryButton", MaterialIconChat, "AI", UiFont, IconFont);
             var switchModeButton = RoomButtonDockIconHelper.CreateCircularButtonWithCaption(dockGo.transform, "SwitchModeButton", MaterialIconSwap, "Mode", UiFont, IconFont);
 
             var behaviour = dockGo.GetComponent<RoomButtonDockBehaviour>();
@@ -258,8 +258,6 @@ namespace Yobi.EditorTools
             }
 
             var so = new SerializedObject(behaviour);
-            so.FindProperty("searchToggleButton").objectReferenceValue = searchButton;
-            so.FindProperty("aiQueryToggleButton").objectReferenceValue = aiQueryButton;
             so.FindProperty("switchModeButton").objectReferenceValue = switchModeButton;
             so.ApplyModifiedPropertiesWithoutUndo();
         }
@@ -267,8 +265,6 @@ namespace Yobi.EditorTools
         // Material Icons (Assets/Fonts/MaterialIcons-Regular.ttf, Apache License 2.0) - glyphs
         // addressed by their standard codepoints rather than the newer "Material Symbols" set,
         // since this is the older, stable "MaterialIcons-Regular" font.
-        private const string MaterialIconSearch = "\uE8B6";
-        private const string MaterialIconChat = "\uE0B7";
         private const string MaterialIconSwap = "\uE8D4";
 
         private static Font _iconFont;

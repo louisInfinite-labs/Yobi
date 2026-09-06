@@ -14,6 +14,11 @@ namespace Yobi.Presentation
     // character in a customizable scene (background wallpaper via RoomBackgroundBehaviour;
     // surrounding UI panels are a separate, not-yet-implemented follow-up). Dragging the
     // character and click-through for non-character pixels are also separate follow-ups.
+    //
+    // Supports macOS (MacWindowControl, a compiled native plugin, true per-pixel transparency)
+    // and Windows (WindowsWindowControl, plain P/Invoke against user32.dll/dwmapi.dll, color-key
+    // transparency - see its own comments for the tradeoff, and note it hasn't been runtime
+    // -verified on real Windows hardware yet).
     public sealed class DesktopCompanionWindowBehaviour : MonoBehaviour
     {
         // Unity (re)creates its macOS CAMetalLayer as the graphics surface comes up, which can
@@ -39,6 +44,15 @@ namespace Yobi.Presentation
 
         public CompanionMode CurrentMode => SwitchModeUseCase.CurrentMode;
 
+        // OSXPlayer/WindowsPlayer only, never the Editor: in the Editor, Play mode renders
+        // inside the Game view panel docked in the Editor's own window - there is no separate
+        // "player window" to find. The native/P-Invoke window search would instead grab whatever
+        // window the Editor itself is running in, making the entire Unity Editor
+        // transparent/borderless rather than just a game window.
+        private static bool IsSupportedDesktopPlatform =>
+            UnityEngine.Application.platform == RuntimePlatform.OSXPlayer ||
+            UnityEngine.Application.platform == RuntimePlatform.WindowsPlayer;
+
         private void Awake()
         {
             _windowPositionRepository = new LocalFileWindowPositionRepository();
@@ -49,12 +63,7 @@ namespace Yobi.Presentation
                 targetCamera = Camera.main;
             }
 
-            // OSXPlayer only, never OSXEditor: in the Editor, Play mode renders inside the
-            // Game view panel docked in the Editor's own window - there is no separate
-            // "player window" to find. YobiWindowControl.m's window search would instead grab
-            // whatever NSWindow the Editor itself is running in, making the entire Unity
-            // Editor transparent/borderless rather than a game window.
-            if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer)
+            if (IsSupportedDesktopPlatform)
             {
                 RestoreWindowPosition();
                 ApplyMode(SwitchModeUseCase.CurrentMode);
@@ -63,12 +72,21 @@ namespace Yobi.Presentation
 
         private void OnApplicationQuit()
         {
-            if (UnityEngine.Application.platform != RuntimePlatform.OSXPlayer)
+            if (!IsSupportedDesktopPlatform)
             {
                 return;
             }
 
-            MacWindowControl.GetPosition(out var x, out var y);
+            double x, y;
+            if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer)
+            {
+                MacWindowControl.GetPosition(out x, out y);
+            }
+            else
+            {
+                WindowsWindowControl.GetPosition(out x, out y);
+            }
+
             _windowPositionRepository.Save(new WindowPosition(x, y));
         }
 
@@ -76,7 +94,7 @@ namespace Yobi.Presentation
         // update the menu label without needing its own copy of the current mode.
         public CompanionMode ToggleMode()
         {
-            if (UnityEngine.Application.platform != RuntimePlatform.OSXPlayer)
+            if (!IsSupportedDesktopPlatform)
             {
                 return SwitchModeUseCase.CurrentMode;
             }
@@ -97,16 +115,28 @@ namespace Yobi.Presentation
                 _desktopMateStyleCoroutine = null;
             }
 
+            var isMac = UnityEngine.Application.platform == RuntimePlatform.OSXPlayer;
+
             if (mode == CompanionMode.DesktopMate)
             {
                 if (targetCamera != null)
                 {
-                    // Alpha 0 so anything the character doesn't cover renders as fully
-                    // transparent instead of a solid color, once the native side also makes the
-                    // window itself see-through (Unity's own render target is opaque by default
-                    // regardless of this - see YobiWindowControl.m).
                     targetCamera.clearFlags = CameraClearFlags.SolidColor;
-                    targetCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                    if (isMac)
+                    {
+                        // Alpha 0 so anything the character doesn't cover renders as fully
+                        // transparent instead of a solid color, once the native side also makes
+                        // the window itself see-through (Unity's own render target is opaque by
+                        // default regardless of this - see YobiWindowControl.m).
+                        targetCamera.backgroundColor = new Color(0f, 0f, 0f, 0f);
+                    }
+                    else
+                    {
+                        // WindowsWindowControl masks out this exact solid color at the OS level
+                        // (color-key layered window) rather than relying on per-pixel alpha - see
+                        // its own comments for why.
+                        targetCamera.backgroundColor = WindowsWindowControl.TransparentKeyColor;
+                    }
                 }
                 _desktopMateStyleCoroutine = StartCoroutine(ApplyDesktopMateStyleOverFirstFrames());
                 _roomBackground?.SetVisible(false);
@@ -120,8 +150,18 @@ namespace Yobi.Presentation
                     targetCamera.clearFlags = CameraClearFlags.SolidColor;
                     targetCamera.backgroundColor = Color.black;
                 }
-                MacWindowControl.ApplyRoomStyle();
-                MacWindowControl.SetAlwaysOnTop(false);
+
+                if (isMac)
+                {
+                    MacWindowControl.ApplyRoomStyle();
+                    MacWindowControl.SetAlwaysOnTop(false);
+                }
+                else
+                {
+                    WindowsWindowControl.ApplyRoomStyle();
+                    WindowsWindowControl.SetAlwaysOnTop(false);
+                }
+
                 _roomBackground?.SetVisible(true);
             }
         }
@@ -129,20 +169,40 @@ namespace Yobi.Presentation
         private void RestoreWindowPosition()
         {
             var saved = _windowPositionRepository.Load();
-            if (saved != null)
+            if (saved == null)
             {
-                // Clamped natively against the currently connected screens' visible frames, in
-                // case the position was saved on a monitor that isn't connected right now.
+                return;
+            }
+
+            // Clamped natively against the currently connected screens' visible frames, in case
+            // the position was saved on a monitor that isn't connected right now.
+            if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer)
+            {
                 MacWindowControl.SetPositionClamped(saved.X, saved.Y);
+            }
+            else
+            {
+                WindowsWindowControl.SetPositionClamped(saved.X, saved.Y);
             }
         }
 
         private IEnumerator ApplyDesktopMateStyleOverFirstFrames()
         {
+            var isMac = UnityEngine.Application.platform == RuntimePlatform.OSXPlayer;
+
             for (int frame = 0; frame < ReapplyFrameCount; frame++)
             {
-                MacWindowControl.MakeTransparent();
-                MacWindowControl.SetAlwaysOnTop(true);
+                if (isMac)
+                {
+                    MacWindowControl.MakeTransparent();
+                    MacWindowControl.SetAlwaysOnTop(true);
+                }
+                else
+                {
+                    WindowsWindowControl.MakeTransparent();
+                    WindowsWindowControl.SetAlwaysOnTop(true);
+                }
+
                 yield return null;
             }
         }

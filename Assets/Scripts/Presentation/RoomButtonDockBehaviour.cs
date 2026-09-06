@@ -3,32 +3,20 @@ using UnityEngine.UI;
 
 namespace Yobi.Presentation
 {
-    // The circular icon buttons along the Room UI's edge (Search / AI Query / Switch Mode, plus
-    // the Settings button SettingsModalUISetup adds to the same dock) - styled to blend into the
-    // background per the reference layout (white fill, black outline, slight transparency)
-    // rather than opaque debug-UI buttons.
+    // The circular icon buttons along the Room UI's edge (Switch Mode, plus the Settings button
+    // SettingsModalUISetup adds to the same dock) - styled to blend into the background per the
+    // reference layout (white fill, black outline, slight transparency) rather than opaque
+    // debug-UI buttons. Search, AI Query, and Wallpaper used to live here too: Search/AI were
+    // replaced by MainSearchBarBehaviour's always-visible unified search bar, and Wallpaper moved
+    // into the Settings modal's Display tab.
     public sealed class RoomButtonDockBehaviour : MonoBehaviour
     {
         private const int CircleTextureDiameter = 128;
 
         [SerializeField]
-        private Button searchToggleButton;
-
-        [SerializeField]
-        private Button aiQueryToggleButton;
-
-        [SerializeField]
         private Button switchModeButton;
 
-        [SerializeField]
-        private GameObject creatorSearchPanel;
-
-        [SerializeField]
-        private GameObject aiQueryPanel;
-
         private DesktopCompanionWindowBehaviour _companionWindow;
-        private CanvasGroup _creatorSearchPanelGroup;
-        private CanvasGroup _aiQueryPanelGroup;
 
         private void Start()
         {
@@ -43,41 +31,6 @@ namespace Yobi.Presentation
             foreach (var button in GetComponentsInChildren<Button>(includeInactive: true))
             {
                 ApplyCircularSprites(button);
-            }
-
-            if (creatorSearchPanel == null)
-            {
-                var searchPanel = FindFirstObjectByType<CreatorSearchPanelBehaviour>();
-                creatorSearchPanel = searchPanel != null ? searchPanel.gameObject : null;
-            }
-
-            if (aiQueryPanel == null)
-            {
-                var aiPanel = FindFirstObjectByType<AiQueryPanelBehaviour>();
-                aiQueryPanel = aiPanel != null ? aiPanel.gameObject : null;
-            }
-
-            // These debug panels used to always be visible, overlapping the Room UI's clock and
-            // button dock. Hidden by default and toggled on demand via the Search/AI buttons
-            // instead - but via a CanvasGroup (alpha/interactable/blocksRaycasts), never
-            // GameObject.SetActive(false). Deactivating the whole GameObject would stop its
-            // MonoBehaviour's own Start() from ever running if this runs first (Unity doesn't
-            // guarantee Start() order across different objects, only that every Awake() runs
-            // before any Start()) - which would permanently skip CreatorSearchPanelBehaviour's
-            // polling loop, and would make it invisible to any *other* script's plain
-            // FindFirstObjectByType call (default excludes inactive objects), such as
-            // RoomReminderListBehaviour subscribing to its WatchlistStatusUpdated event.
-            _creatorSearchPanelGroup = EnsureHiddenViaCanvasGroup(creatorSearchPanel);
-            _aiQueryPanelGroup = EnsureHiddenViaCanvasGroup(aiQueryPanel);
-
-            if (searchToggleButton != null)
-            {
-                searchToggleButton.onClick.AddListener(() => TogglePanel(_creatorSearchPanelGroup));
-            }
-
-            if (aiQueryToggleButton != null)
-            {
-                aiQueryToggleButton.onClick.AddListener(() => TogglePanel(_aiQueryPanelGroup));
             }
 
             if (switchModeButton != null)
@@ -139,38 +92,6 @@ namespace Yobi.Presentation
             texture.Apply();
 
             return Sprite.Create(texture, new Rect(0f, 0f, diameter, diameter), new Vector2(0.5f, 0.5f));
-        }
-
-        private static CanvasGroup EnsureHiddenViaCanvasGroup(GameObject panel)
-        {
-            if (panel == null)
-            {
-                return null;
-            }
-
-            var group = panel.GetComponent<CanvasGroup>();
-            if (group == null)
-            {
-                group = panel.AddComponent<CanvasGroup>();
-            }
-
-            SetGroupVisible(group, false);
-            return group;
-        }
-
-        private static void TogglePanel(CanvasGroup group)
-        {
-            if (group != null)
-            {
-                SetGroupVisible(group, group.alpha < 0.5f);
-            }
-        }
-
-        private static void SetGroupVisible(CanvasGroup group, bool visible)
-        {
-            group.alpha = visible ? 1f : 0f;
-            group.interactable = visible;
-            group.blocksRaycasts = visible;
         }
 
         private void OnSwitchModeButtonClicked()
