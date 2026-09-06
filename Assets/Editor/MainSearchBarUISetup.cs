@@ -16,6 +16,14 @@ namespace Yobi.EditorTools
         private const string ScenePath = "Assets/Scenes/SampleScene.unity";
         private static readonly Font UiFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
+        // Material Icons (Assets/Fonts/MaterialIcons-Regular.ttf, Apache License 2.0) "search"
+        // glyph, addressed by its standard codepoint - see RoomUIPanelSetup's identical convention.
+        private const string MaterialIconSearch = "\uE8B6";
+
+        private static Font _iconFont;
+        private static Font IconFont =>
+            _iconFont != null ? _iconFont : (_iconFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/MaterialIcons-Regular.ttf"));
+
         [MenuItem("Tools/Yobi/Setup Main Search Bar")]
         private static void SetupMainSearchBar()
         {
@@ -61,13 +69,13 @@ namespace Yobi.EditorTools
             DestroyGeneratedChild(barGo.transform, "ResultsContainer");
             DestroyGeneratedChild(barGo.transform, "AnswerText");
 
-            var inputField = CreateInputField(barGo.transform, "SearchInputField");
+            var inputField = CreateInputField(barGo.transform, "SearchInputField", out var searchIconButton);
             var backgroundImage = inputField.GetComponent<Image>();
 
             var resultsContainer = CreateResultsContainer(barGo.transform, out var resultRowTemplate);
             var answerText = CreateAnswerText(barGo.transform, "AnswerText");
 
-            WireReferences(behaviour, inputField, backgroundImage, resultsContainer, resultRowTemplate, answerText);
+            WireReferences(behaviour, inputField, searchIconButton, backgroundImage, resultsContainer, resultRowTemplate, answerText);
 
             EditorUtility.SetDirty(barGo);
             EditorSceneManager.MarkSceneDirty(scene);
@@ -168,7 +176,7 @@ namespace Yobi.EditorTools
         // A plain white square placeholder - MainSearchBarBehaviour paints the actual rounded-pill
         // shape onto this Image at runtime (generated in code, not a checked-in art asset), same
         // convention as the dock's circular buttons.
-        private static InputField CreateInputField(Transform parent, string name)
+        private static InputField CreateInputField(Transform parent, string name, out Button searchIconButton)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(InputField), typeof(LayoutElement));
             go.transform.SetParent(parent, false);
@@ -178,13 +186,15 @@ namespace Yobi.EditorTools
             layoutElement.flexibleWidth = 1f;
             layoutElement.preferredHeight = 44f;
 
+            // Right edge reserved for the search icon button below (52px, not the full 20px
+            // margin every other side uses) so typed/placeholder text never runs under it.
             var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
             textGo.transform.SetParent(go.transform, false);
             var text = textGo.GetComponent<Text>();
             text.font = UiFont;
             text.color = Color.black;
             text.alignment = TextAnchor.MiddleLeft;
-            SetupStretch(textGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-20f, -6f));
+            SetupStretch(textGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-52f, -6f));
 
             var placeholderGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
             placeholderGo.transform.SetParent(go.transform, false);
@@ -194,13 +204,48 @@ namespace Yobi.EditorTools
             placeholder.color = new Color(0f, 0f, 0f, 0.4f);
             placeholder.fontStyle = FontStyle.Italic;
             placeholder.alignment = TextAnchor.MiddleLeft;
-            SetupStretch(placeholderGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-20f, -6f));
+            SetupStretch(placeholderGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-52f, -6f));
 
             var inputField = go.GetComponent<InputField>();
             inputField.textComponent = text;
             inputField.placeholder = placeholder;
 
+            searchIconButton = CreateSearchIconButton(go.transform);
+
             return inputField;
+        }
+
+        // A plain icon button (not one of the dock's circular buttons - this lives inside the
+        // pill, not the dock) sitting inside the input field's own right edge, matching a
+        // Google-style search box's icon placement.
+        private static Button CreateSearchIconButton(Transform parent)
+        {
+            var go = new GameObject("SearchIconButton", typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(parent, false);
+
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            rect.anchoredPosition = new Vector2(-8f, 0f);
+            rect.sizeDelta = new Vector2(36f, 36f);
+
+            var image = go.GetComponent<Image>();
+            image.color = new Color(1f, 1f, 1f, 0f);
+            var button = go.GetComponent<Button>();
+            button.targetGraphic = image;
+
+            var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(Text));
+            iconGo.transform.SetParent(go.transform, false);
+            var iconText = iconGo.GetComponent<Text>();
+            iconText.font = IconFont != null ? IconFont : UiFont;
+            iconText.text = MaterialIconSearch;
+            iconText.color = new Color(0f, 0f, 0f, 0.6f);
+            iconText.fontSize = 20;
+            iconText.alignment = TextAnchor.MiddleCenter;
+            SetupStretch(iconGo.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero);
+
+            return button;
         }
 
         private static RectTransform CreateResultsContainer(Transform parent, out GameObject resultRowTemplate)
@@ -252,11 +297,21 @@ namespace Yobi.EditorTools
             nameText.color = Color.white;
             nameText.alignment = TextAnchor.MiddleLeft;
 
+            // Fixed width, not flexible - "1小時59分後" needs to fit without pushing NameText
+            // around from row to row; richText stays on Unity's Text default so
+            // MainSearchBarBehaviour's "<color=...>●</color> Live" markup renders as intended.
+            var statusText = CreateText(row.transform, "StatusText", string.Empty);
+            var statusLayout = statusText.gameObject.AddComponent<LayoutElement>();
+            statusLayout.preferredWidth = 80f;
+            statusText.color = new Color(1f, 1f, 1f, 0.85f);
+            statusText.alignment = TextAnchor.MiddleRight;
+            statusText.fontSize = 11;
+
             var addButtonGo = new GameObject("AddButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
             addButtonGo.transform.SetParent(row.transform, false);
             addButtonGo.GetComponent<Image>().color = new Color(0.85f, 0.85f, 0.85f, 1f);
             var addButtonLayout = addButtonGo.GetComponent<LayoutElement>();
-            addButtonLayout.preferredWidth = 110f;
+            addButtonLayout.preferredWidth = 90f;
             addButtonLayout.preferredHeight = 26f;
 
             var addButtonText = CreateText(addButtonGo.transform, "Text", "加落追蹤");
@@ -320,6 +375,7 @@ namespace Yobi.EditorTools
         private static void WireReferences(
             MainSearchBarBehaviour behaviour,
             InputField inputField,
+            Button searchIconButton,
             Image backgroundImage,
             RectTransform resultsContainer,
             GameObject resultRowTemplate,
@@ -327,6 +383,7 @@ namespace Yobi.EditorTools
         {
             var so = new SerializedObject(behaviour);
             so.FindProperty("searchInputField").objectReferenceValue = inputField;
+            so.FindProperty("searchIconButton").objectReferenceValue = searchIconButton;
             so.FindProperty("backgroundImage").objectReferenceValue = backgroundImage;
             so.FindProperty("resultsContainer").objectReferenceValue = resultsContainer;
             so.FindProperty("resultRowTemplate").objectReferenceValue = resultRowTemplate;

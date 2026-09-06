@@ -6,12 +6,25 @@ using Yobi.Domain.Entities;
 
 namespace Yobi.Presentation
 {
-    // Compact, always-visible list of watchlisted creators who are live now or scheduled soon,
-    // so the user isn't solely reliant on the macOS notification banner (which can be dismissed
-    // by accident). Fed by CreatorSearchPanelBehaviour's own watchlist refresh - deliberately
-    // doesn't run its own polling loop, to avoid doubling the Holodex request rate.
+    // Collapsible list of watchlisted creators who are live now or scheduled soon, tucked behind
+    // a "List Status ▼" header (collapsed by default) so it isn't a permanent block of screen
+    // real estate the user isn't currently looking at - click the header to expand/collapse.
+    // Fed by CreatorSearchPanelBehaviour's own watchlist refresh - deliberately doesn't run its
+    // own polling loop, to avoid doubling the Holodex request rate.
     public sealed class RoomReminderListBehaviour : MonoBehaviour
     {
+        private const string CollapsedLabel = "List Status ▼";
+        private const string ExpandedLabel = "List Status ▲";
+
+        [SerializeField]
+        private Button headerButton;
+
+        [SerializeField]
+        private Text headerLabel;
+
+        [SerializeField]
+        private GameObject contentPanel;
+
         [SerializeField]
         private RectTransform rowContainer;
 
@@ -28,10 +41,39 @@ namespace Yobi.Presentation
                 rowTemplate.SetActive(false);
             }
 
+            // Collapsed by default - SetActive(false) here (rather than only relying on the
+            // Editor tool's own initial state) is what keeps it collapsed on every subsequent
+            // rebuild too, since the Editor tool only sets this up once for a brand-new panel.
+            if (contentPanel != null)
+            {
+                contentPanel.SetActive(false);
+            }
+
+            if (headerButton != null)
+            {
+                headerButton.onClick.AddListener(ToggleExpanded);
+            }
+
             _searchPanel = FindFirstObjectByType<CreatorSearchPanelBehaviour>();
             if (_searchPanel != null)
             {
                 _searchPanel.WatchlistStatusUpdated += OnWatchlistStatusUpdated;
+            }
+        }
+
+        private void ToggleExpanded()
+        {
+            if (contentPanel == null)
+            {
+                return;
+            }
+
+            var expanded = !contentPanel.activeSelf;
+            contentPanel.SetActive(expanded);
+
+            if (headerLabel != null)
+            {
+                headerLabel.text = expanded ? ExpandedLabel : CollapsedLabel;
             }
         }
 
