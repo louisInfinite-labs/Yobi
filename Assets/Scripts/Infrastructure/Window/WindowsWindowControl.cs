@@ -38,6 +38,7 @@ namespace Yobi.Infrastructure.Window
         private const uint SwpNoMove = 0x0002;
         private const uint SwpNoSize = 0x0001;
         private const uint SwpNoZOrder = 0x0004;
+        private const uint SwpFrameChanged = 0x0020;
         private static readonly IntPtr HwndTopMost = new IntPtr(-1);
         private static readonly IntPtr HwndNoTopMost = new IntPtr(-2);
 
@@ -45,6 +46,13 @@ namespace Yobi.Infrastructure.Window
         // mode wants, restored by clearing WS_EX_LAYERED/WS_EX_TRANSPARENT rather than needing a
         // saved copy of the original style bits (Unity's default player style already matches this).
         private const int WsOverlappedWindow = 0x00CF0000;
+
+        // WS_POPUP: no caption/border/frame at all - MakeTransparent's own GWL_STYLE for
+        // DesktopMate. GWL_EXSTYLE alone (WS_EX_LAYERED/WS_EX_TRANSPARENT) only controls
+        // compositing/click-through, not whether Windows still draws a title bar and frame
+        // around the window - without also clearing GWL_STYLE down to this, DesktopMate would
+        // still show chrome around the "borderless overlay".
+        private const int WsPopup = unchecked((int)0x80000000);
         private const int GwlStyle = -16;
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -69,12 +77,19 @@ namespace Yobi.Infrastructure.Window
         private static extern bool GetWindowRect(IntPtr hWnd, out Rect lpRect);
 
         [DllImport("user32.dll")]
-        private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
+        private static extern IntPtr MonitorFromPoint(Point pt, uint dwFlags);
 
         [DllImport("user32.dll")]
         private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
 
         private const uint MonitorDefaultToNearest = 2;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Point
+        {
+            public int X;
+            public int Y;
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         private struct Rect
@@ -117,11 +132,15 @@ namespace Yobi.Infrastructure.Window
                 return;
             }
 
+            SetWindowLong(hwnd, GwlStyle, WsPopup);
+
             var exStyle = GetWindowLong(hwnd, GwlExStyle);
             SetWindowLong(hwnd, GwlExStyle, exStyle | WsExLayered | WsExTransparent);
 
             var colorKey = ToColorRef(TransparentKeyColor);
             SetLayeredWindowAttributes(hwnd, colorKey, 0, LwaColorKey);
+
+            ApplyFrameChange(hwnd);
         }
 
         public static void ApplyRoomStyle()
@@ -135,6 +154,17 @@ namespace Yobi.Infrastructure.Window
             var exStyle = GetWindowLong(hwnd, GwlExStyle);
             SetWindowLong(hwnd, GwlExStyle, exStyle & ~WsExLayered & ~WsExTransparent);
             SetWindowLong(hwnd, GwlStyle, WsOverlappedWindow);
+
+            ApplyFrameChange(hwnd);
+        }
+
+        // Style bits set via SetWindowLong are cached by Windows and not visually applied to the
+        // window's non-client area (border/caption/frame) until the window manager is explicitly
+        // told to recalculate it - a SetWindowPos call with SWP_FRAMECHANGED (and no actual
+        // move/resize/z-order change) is how that's normally triggered.
+        private static void ApplyFrameChange(IntPtr hwnd)
+        {
+            SetWindowPos(hwnd, IntPtr.Zero, 0, 0, 0, 0, SwpNoMove | SwpNoSize | SwpNoZOrder | SwpFrameChanged);
         }
 
         public static void SetAlwaysOnTop(bool alwaysOnTop)
@@ -193,7 +223,10 @@ namespace Yobi.Infrastructure.Window
             var clampedX = x;
             var clampedY = y;
 
-            var monitor = MonitorFromWindow(hwnd, MonitorDefaultToNearest);
+            // The monitor containing the *target* (saved) position, not wherever the window
+            // currently happens to sit - a position saved on a second monitor must be clamped
+            // against that monitor's work area, not the primary one the window launches on.
+            var monitor = MonitorFromPoint(new Point { X = (int)x, Y = (int)y }, MonitorDefaultToNearest);
             if (monitor != IntPtr.Zero)
             {
                 var info = new MonitorInfo { cbSize = (uint)Marshal.SizeOf<MonitorInfo>() };
