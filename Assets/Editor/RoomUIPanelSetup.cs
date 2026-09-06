@@ -15,7 +15,7 @@ namespace Yobi.EditorTools
         private static readonly Font UiFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
         [MenuItem("Tools/Yobi/Setup Room UI Panel")]
-        private static void SetupRoomUIPanel()
+        internal static void SetupRoomUIPanel()
         {
             var scene = EditorSceneManager.GetActiveScene();
             if (scene.path != ScenePath)
@@ -25,9 +25,33 @@ namespace Yobi.EditorTools
 
             var canvasGo = EnsureCanvas();
 
+            // Leftover from an earlier iteration of this tool that briefly built Live Status and
+            // Follow List as two separate always-visible sections, stacked - since replaced by one
+            // section with a switchModeButton toggling between the two. Left alone, this stale
+            // top-level GameObject would keep rendering its own duplicate list forever (its
+            // RoomReminderListBehaviour stays subscribed to CreatorSearchPanelBehaviour's
+            // WatchlistStatusUpdated regardless of whether anything still references it).
+            var staleFollowList = GameObject.Find("RoomFollowList");
+            if (staleFollowList != null)
+            {
+                Object.DestroyImmediate(staleFollowList);
+            }
+
             SetupClock(canvasGo.transform);
             SetupReminderList(canvasGo.transform);
             SetupButtonDock(canvasGo.transform);
+
+            // LayoutGroups rebuild lazily - without forcing it here, nested layout groups built
+            // in one code-driven pass (RoomButtonDock's own VerticalLayoutGroup positioning each
+            // button, and each button's own Container using a nested VerticalLayoutGroup +
+            // ContentSizeFitter to size itself around its icon+caption) can leave the outer
+            // dock's SAVED positions computed against a Container's still-default, not-yet-sized
+            // height, instead of its real one - baking overlapping positions into the scene
+            // rather than the correctly-stacked ones a live layout pass would produce. Same fix
+            // already applied to SettingsModalUISetup/MainSearchBarBehaviour for the identical
+            // class of bug.
+            Canvas.ForceUpdateCanvases();
+            LayoutRebuilder.ForceRebuildLayoutImmediate(canvasGo.GetComponent<RectTransform>());
 
             EditorUtility.SetDirty(canvasGo);
             EditorSceneManager.MarkSceneDirty(scene);
@@ -171,7 +195,7 @@ namespace Yobi.EditorTools
             rootLayout.childForceExpandHeight = false;
             panelGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var headerButton = CreateReminderHeaderButton(panelGo.transform, out var headerLabel);
+            var headerButton = CreateReminderHeaderButton(panelGo.transform, out var headerLabel, out var switchModeButton);
             var contentPanel = CreateReminderContentPanel(panelGo.transform, out var containerRect, out var rowTemplate);
 
             var behaviour = panelGo.GetComponent<RoomReminderListBehaviour>();
@@ -183,25 +207,92 @@ namespace Yobi.EditorTools
             var so = new SerializedObject(behaviour);
             so.FindProperty("headerButton").objectReferenceValue = headerButton;
             so.FindProperty("headerLabel").objectReferenceValue = headerLabel;
+            so.FindProperty("switchModeButton").objectReferenceValue = switchModeButton;
             so.FindProperty("contentPanel").objectReferenceValue = contentPanel;
             so.FindProperty("rowContainer").objectReferenceValue = containerRect;
             so.FindProperty("rowTemplate").objectReferenceValue = rowTemplate;
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
-        private static Button CreateReminderHeaderButton(Transform parent, out Text label)
+        // Header row now carries two independent click targets on one background: the small
+        // swap_horiz icon (RoomReminderListBehaviour.OnSwitchModeButtonClicked - Live Status vs
+        // Follow List) and the label (its own Button toggles expand/collapse). A child Button's
+        // own raycastable Image sits in front of the header's background Button at that pixel, so
+        // clicking the icon fires only the icon's onClick, not both - no extra pointer-frame
+        // bookkeeping needed (unlike MainSearchBarBehaviour's InputField-blur case, neither of
+        // these buttons causes the other to lose focus first).
+        //
+        // Icon+label live inside "Content", a HorizontalLayoutGroup sized to its own content
+        // (ContentSizeFitter) and anchored to HeaderButton's center - centering that whole group
+        // together, rather than positioning the icon and label independently, is what keeps them
+        // visually centered as a pair regardless of header width, and keeps them correctly
+        // re-centered as one unit when the label's own text length changes between "Live Status ▼"
+        // and the longer "Follow List ▲".
+        private static Button CreateReminderHeaderButton(Transform parent, out Text label, out Button switchModeButton)
         {
             var go = new GameObject("HeaderButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
             go.transform.SetParent(parent, false);
             go.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.45f);
             go.GetComponent<LayoutElement>().preferredHeight = 26f;
 
-            label = CreateText(go.transform, "Text", "List Status ▼");
+            var contentGo = new GameObject("Content", typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(ContentSizeFitter));
+            contentGo.transform.SetParent(go.transform, false);
+            var contentRect = contentGo.GetComponent<RectTransform>();
+            contentRect.anchorMin = new Vector2(0.5f, 0.5f);
+            contentRect.anchorMax = new Vector2(0.5f, 0.5f);
+            contentRect.pivot = new Vector2(0.5f, 0.5f);
+            contentRect.anchoredPosition = Vector2.zero;
+
+            var contentLayout = contentGo.GetComponent<HorizontalLayoutGroup>();
+            contentLayout.spacing = 6f;
+            contentLayout.childAlignment = TextAnchor.MiddleCenter;
+            contentLayout.childControlWidth = true;
+            contentLayout.childControlHeight = true;
+            contentLayout.childForceExpandWidth = false;
+            contentLayout.childForceExpandHeight = false;
+
+            var contentFitter = contentGo.GetComponent<ContentSizeFitter>();
+            contentFitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            contentFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            switchModeButton = CreateSwitchModeIconButton(contentGo.transform);
+
+            label = CreateText(contentGo.transform, "Text", string.Empty);
             label.fontSize = 12;
             label.alignment = TextAnchor.MiddleCenter;
-            SetupStretch(label.GetComponent<RectTransform>(), new Vector2(8f, 0f), new Vector2(-8f, 0f));
 
             return go.GetComponent<Button>();
+        }
+
+        // Reuses the same swap_horiz glyph (MaterialIconSwap) as the button dock's Mode button -
+        // both mean "switch between two views", just at a smaller scale for this header. Sized via
+        // LayoutElement rather than manual anchoring, now that it's a child of Content's
+        // HorizontalLayoutGroup above.
+        private static Button CreateSwitchModeIconButton(Transform parent)
+        {
+            var go = new GameObject("SwitchModeButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+
+            var layoutElement = go.GetComponent<LayoutElement>();
+            layoutElement.preferredWidth = 20f;
+            layoutElement.preferredHeight = 20f;
+
+            var image = go.GetComponent<Image>();
+            image.color = new Color(1f, 1f, 1f, 0f);
+            var button = go.GetComponent<Button>();
+            button.targetGraphic = image;
+
+            var iconGo = new GameObject("Icon", typeof(RectTransform), typeof(Text));
+            iconGo.transform.SetParent(go.transform, false);
+            var iconText = iconGo.GetComponent<Text>();
+            iconText.font = IconFont != null ? IconFont : UiFont;
+            iconText.text = MaterialIconSwap;
+            iconText.color = Color.white;
+            iconText.fontSize = 14;
+            iconText.alignment = TextAnchor.MiddleCenter;
+            SetupStretch(iconGo.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero);
+
+            return button;
         }
 
         private static GameObject CreateReminderContentPanel(Transform parent, out RectTransform containerRect, out GameObject rowTemplate)
@@ -254,8 +345,13 @@ namespace Yobi.EditorTools
             dotGo.transform.SetParent(rowGo.transform, false);
             dotGo.GetComponent<Image>().color = Color.gray;
             var dotLayout = dotGo.GetComponent<LayoutElement>();
-            dotLayout.preferredWidth = 10f;
-            dotLayout.preferredHeight = 10f;
+            // Pinned to a fixed 5 - childForceExpandHeight above already stretches this to the
+            // row's full height regardless of preferredHeight, so only width needs fixing here;
+            // minWidth/flexibleWidth are set explicitly too so the HorizontalLayoutGroup never has
+            // room to render it any thicker or thinner than that on any row.
+            dotLayout.preferredWidth = 5f;
+            dotLayout.minWidth = 5f;
+            dotLayout.flexibleWidth = 0f;
 
             var nameText = CreateText(rowGo.transform, "NameText", string.Empty);
             nameText.fontSize = 12;
@@ -269,7 +365,41 @@ namespace Yobi.EditorTools
             var statusLayout = statusText.gameObject.AddComponent<LayoutElement>();
             statusLayout.preferredWidth = 50f;
 
+            CreateRemoveButton(rowGo.transform);
+
             return rowGo;
+        }
+
+        // Follow List only (RoomReminderListBehaviour hides this on Live Status rows) - unfollow
+        // straight from the list instead of having to go back through search. Same "transparent
+        // hit area + fixed-size centered Visual square" structure as MainSearchBarUISetup's own
+        // AddButton/history-row "✕", so a taller-than-expected row (from a long wrapped NameText
+        // elsewhere) can never distort this icon's own size either.
+        private static void CreateRemoveButton(Transform parent)
+        {
+            var go = new GameObject("RemoveButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+            var hitArea = go.GetComponent<Image>();
+            hitArea.color = new Color(1f, 1f, 1f, 0f);
+            go.GetComponent<Button>().targetGraphic = hitArea;
+            var layoutElement = go.GetComponent<LayoutElement>();
+            layoutElement.preferredWidth = 18f;
+            layoutElement.minWidth = 18f;
+
+            var visualGo = new GameObject("Visual", typeof(RectTransform), typeof(Text));
+            visualGo.transform.SetParent(go.transform, false);
+            var visualRect = visualGo.GetComponent<RectTransform>();
+            visualRect.anchorMin = new Vector2(0.5f, 0.5f);
+            visualRect.anchorMax = new Vector2(0.5f, 0.5f);
+            visualRect.pivot = new Vector2(0.5f, 0.5f);
+            visualRect.sizeDelta = new Vector2(18f, 18f);
+
+            var visualText = visualGo.GetComponent<Text>();
+            visualText.font = UiFont;
+            visualText.text = "✕";
+            visualText.color = new Color(1f, 1f, 1f, 0.6f);
+            visualText.fontSize = 11;
+            visualText.alignment = TextAnchor.MiddleCenter;
         }
 
         private static void SetupButtonDock(Transform canvasTransform)

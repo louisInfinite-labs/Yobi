@@ -37,6 +37,36 @@ namespace Yobi.Presentation
             {
                 switchModeButton.onClick.AddListener(OnSwitchModeButtonClicked);
             }
+
+            ForceLayoutRebuild();
+        }
+
+        // Runtime safety net: this dock is assembled by two separate Editor tools
+        // (RoomUIPanelSetup for Mode, SettingsModalUISetup for Settings), each baking its own
+        // button container's position into the scene independently. The baked positions can
+        // look correctly separated in the saved scene file yet still render overlapping on the
+        // first Play frame, because each container's real height depends on its own
+        // ContentSizeFitter/font metrics settling - which isn't guaranteed to have happened
+        // before the dock's VerticalLayoutGroup positions its children. Forcing an immediate
+        // rebuild here, bottom-up (each container first, then the dock itself), guarantees the
+        // buttons are correctly stacked the moment Play starts, regardless of what was baked at
+        // edit-time or which Editor tool ran last.
+        private void ForceLayoutRebuild()
+        {
+            var dockRect = transform as RectTransform;
+            if (dockRect == null)
+            {
+                return;
+            }
+
+            Canvas.ForceUpdateCanvases();
+
+            foreach (RectTransform child in dockRect)
+            {
+                LayoutRebuilder.ForceRebuildLayoutImmediate(child);
+            }
+
+            LayoutRebuilder.ForceRebuildLayoutImmediate(dockRect);
         }
 
         // Paints a real circular shape onto a button's border Image and its "Fill" child Image

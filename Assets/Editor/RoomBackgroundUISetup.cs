@@ -11,7 +11,7 @@ namespace Yobi.EditorTools
         private const string ScenePath = "Assets/Scenes/SampleScene.unity";
 
         [MenuItem("Tools/Yobi/Setup Room Background")]
-        private static void SetupRoomBackground()
+        internal static void SetupRoomBackground()
         {
             var scene = EditorSceneManager.GetActiveScene();
             if (scene.path != ScenePath)

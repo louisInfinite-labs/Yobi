@@ -27,5 +27,10 @@ namespace Yobi.Domain.Entities
                 _entries.RemoveRange(maxEntries, _entries.Count - maxEntries);
             }
         }
+
+        public void Remove(string query)
+        {
+            _entries.Remove(query);
+        }
     }
 }

@@ -16,10 +16,11 @@ using Yobi.Infrastructure.Storage;
 namespace Yobi.Presentation
 {
     // The single Google-homepage-style input field that replaced the separate Search and AI
-    // Query dock buttons/panels. Submitting a query tries a Holodex/mock creator-name search
-    // first (via CreatorSearchPanelBehaviour, so adds land in the same in-memory watchlist its
-    // polling loop already reads from); if nothing matches, it falls back to the existing local
-    // AI query parser unchanged.
+    // Query dock buttons/panels. Default source is Holodex/mock creator-name search (via
+    // CreatorSearchPanelBehaviour, so adds land in the same in-memory watchlist its polling loop
+    // already reads from) - it never silently falls back to the AI query parser. AI Mode is an
+    // explicit opt-in toggle (aiModeToggleButton, left of the search icon): while it's on, every
+    // submission goes to the AI parser instead of Holodex, until toggled off again.
     public sealed class MainSearchBarBehaviour : MonoBehaviour
     {
         private const int PillTextureSize = 64;
@@ -30,6 +31,12 @@ namespace Yobi.Presentation
 
         [SerializeField]
         private Button searchIconButton;
+
+        [SerializeField]
+        private Button aiModeToggleButton;
+
+        [SerializeField]
+        private Image aiModeToggleBackground;
 
         [SerializeField]
         private Image backgroundImage;
@@ -54,6 +61,7 @@ namespace Yobi.Presentation
         private QueryHistory _queryHistory;
         private CancellationTokenSource _requestCts;
         private int _iconPointerDownFrame = -1;
+        private bool _aiModeEnabled;
 
         private readonly List<GameObject> _activeResultRows = new List<GameObject>();
 
@@ -122,6 +130,45 @@ namespace Yobi.Presentation
                 pointerDownEntry.callback.AddListener(_ => _iconPointerDownFrame = Time.frameCount);
                 iconTrigger.triggers.Add(pointerDownEntry);
             }
+
+            if (aiModeToggleButton != null)
+            {
+                aiModeToggleButton.onClick.AddListener(OnAiModeToggleClicked);
+                UpdateAiModeVisual();
+
+                // Same blur-before-click ordering problem as searchIconButton above, and the same
+                // fix - reusing _iconPointerDownFrame is fine since only one of these two buttons
+                // can be the one actually clicked in a given frame.
+                var aiModeTrigger = aiModeToggleButton.gameObject.GetComponent<EventTrigger>();
+                if (aiModeTrigger == null)
+                {
+                    aiModeTrigger = aiModeToggleButton.gameObject.AddComponent<EventTrigger>();
+                }
+
+                var aiPointerDownEntry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+                aiPointerDownEntry.callback.AddListener(_ => _iconPointerDownFrame = Time.frameCount);
+                aiModeTrigger.triggers.Add(aiPointerDownEntry);
+            }
+        }
+
+        private void OnAiModeToggleClicked()
+        {
+            _aiModeEnabled = !_aiModeEnabled;
+            UpdateAiModeVisual();
+        }
+
+        // Off: near-invisible, matching the plain search icon's resting look. On: a filled accent
+        // color so it's obvious queries are now routed to the AI instead of Holodex.
+        private void UpdateAiModeVisual()
+        {
+            if (aiModeToggleBackground == null)
+            {
+                return;
+            }
+
+            aiModeToggleBackground.color = _aiModeEnabled
+                ? new Color(0.3f, 0.55f, 1f, 0.9f)
+                : new Color(1f, 1f, 1f, 0f);
         }
 
         private void OnDestroy()
@@ -162,6 +209,12 @@ namespace Yobi.Presentation
             _requestCts = new CancellationTokenSource();
             var requestToken = _requestCts.Token;
 
+            if (_aiModeEnabled)
+            {
+                await RunAiQueryAsync(query, requestToken);
+                return;
+            }
+
             var searchResults = Array.Empty<CreatorSearchResult>() as IReadOnlyList<CreatorSearchResult>;
 
             if (_searchPanel != null)
@@ -176,26 +229,27 @@ namespace Yobi.Presentation
                 }
                 catch (Exception ex)
                 {
-                    // Not fatal - fall through to the AI path below instead of dead-ending here.
-                    Debug.LogError($"[MainSearchBar] Creator search failed, falling back to AI: {ex.Message}");
+                    Debug.LogError($"[MainSearchBar] Creator search failed: {ex.Message}");
                 }
             }
 
             // Cancelling _requestCts above doesn't guarantee the awaits below actually observe
             // it before completing - a stale request can still win the race and reach here after
-            // a newer one has already started, so each terminal render is guarded once more
+            // a newer one has already started, so this terminal render is guarded once more
             // immediately before it runs.
-            if (searchResults.Count > 0)
+            if (requestToken.IsCancellationRequested)
             {
-                if (requestToken.IsCancellationRequested)
-                {
-                    return;
-                }
-
-                ShowMatches(searchResults);
                 return;
             }
 
+            ShowMatches(searchResults);
+        }
+
+        // Extracted so both submission paths (Enter/blur via SubmitQuery, and an icon click via
+        // OnSearchIconClicked) can reach the AI parser when AI Mode is on, instead of the Holodex
+        // search each normally runs.
+        private async Task RunAiQueryAsync(string query, CancellationToken requestToken)
+        {
             using var tickerCts = CancellationTokenSource.CreateLinkedTokenSource(requestToken);
             RunThinkingTicker(tickerCts.Token);
 
@@ -245,6 +299,12 @@ namespace Yobi.Presentation
             _requestCts?.Dispose();
             _requestCts = new CancellationTokenSource();
             var requestToken = _requestCts.Token;
+
+            if (_aiModeEnabled)
+            {
+                await RunAiQueryAsync(query, requestToken);
+                return;
+            }
 
             if (_searchPanel == null)
             {
@@ -408,6 +468,37 @@ namespace Yobi.Presentation
             resultsContainer.gameObject.SetActive(false);
         }
 
+        // ShowHistoryIfEmpty() alone can't handle this: it bails out early (leaving stale rows
+        // on screen) once Entries.Count reaches 0, since that early-return exists to avoid
+        // clearing/re-showing results for an unrelated reason (the field isn't empty). Removing
+        // the last entry needs the opposite - always clear, then either re-render what's left or
+        // hide entirely.
+        private void OnRemoveHistoryClicked(string query)
+        {
+            _queryHistory.Remove(query);
+
+            try
+            {
+                _queryHistoryRepository.Save(_queryHistory);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MainSearchBar] Failed to save query history: {ex.Message}");
+            }
+
+            if (_queryHistory.Entries.Count == 0)
+            {
+                HideResults();
+                return;
+            }
+
+            ClearResultRows();
+            foreach (var remainingQuery in _queryHistory.Entries)
+            {
+                CreateHistoryRow(remainingQuery);
+            }
+        }
+
         private void ShowAnswer(string text)
         {
             ClearResultRows();
@@ -496,14 +587,47 @@ namespace Yobi.Presentation
             }
 
             var addButton = row.transform.Find("AddButton")?.GetComponent<Button>();
-            var addButtonLabel = addButton != null ? addButton.transform.Find("Text")?.GetComponent<Text>() : null;
+            var addButtonVisual = addButton != null ? addButton.transform.Find("Visual")?.GetComponent<Image>() : null;
+            var addButtonLabel = addButton != null ? addButton.transform.Find("Visual/Text")?.GetComponent<Text>() : null;
             if (addButton != null)
             {
-                addButton.onClick.RemoveAllListeners();
-                addButton.onClick.AddListener(() => OnAddToWatchlistClicked(result, addButton, addButtonLabel));
+                // Reflects the actual persisted watchlist, not just clicks made this session -
+                // without this, every fresh search (including the very next one for the same
+                // creator, or the first search after relaunching the app) always started the
+                // button back at "+" regardless of whether that creator was already tracked.
+                var alreadyWatchlisted = _searchPanel != null && _searchPanel.IsWatchlisted(result.ChannelId);
+                if (alreadyWatchlisted)
+                {
+                    SetAddButtonAdded(addButton, addButtonVisual, addButtonLabel);
+                }
+                else
+                {
+                    addButton.onClick.RemoveAllListeners();
+                    addButton.onClick.AddListener(() => OnAddToWatchlistClicked(result, addButton, addButtonVisual, addButtonLabel));
+                }
             }
 
             _activeResultRows.Add(row);
+        }
+
+        // Shared by the "already watchlisted at row-creation time" and "just clicked +" paths so
+        // the visual never diverges between them - a filled checkmark, no background square (the
+        // "+" state's gray square was there to read as a button; once added there's nothing left
+        // to click, so the same quiet no-background treatment as the history list's "✕" applies).
+        private static void SetAddButtonAdded(Button addButton, Image addButtonVisual, Text addButtonLabel)
+        {
+            if (addButtonVisual != null)
+            {
+                addButtonVisual.color = new Color(0f, 0f, 0f, 0f);
+            }
+
+            if (addButtonLabel != null)
+            {
+                addButtonLabel.text = "✓";
+                addButtonLabel.color = new Color(0.4f, 0.85f, 0.5f);
+            }
+
+            addButton.interactable = false;
         }
 
         // Reuses the same row template as a creator match, minus the add-to-watchlist button -
@@ -526,10 +650,27 @@ namespace Yobi.Presentation
                 statusText.gameObject.SetActive(false);
             }
 
+            // Repurposed as a delete button rather than hidden - "✕", no background (the row's
+            // own subtle highlight is enough), so it reads as a quiet per-row action rather than
+            // competing visually with the "+" this same button is elsewhere.
             var addButton = row.transform.Find("AddButton")?.GetComponent<Button>();
+            var addButtonVisual = row.transform.Find("AddButton/Visual")?.GetComponent<Image>();
+            var addButtonLabel = row.transform.Find("AddButton/Visual/Text")?.GetComponent<Text>();
             if (addButton != null)
             {
-                addButton.gameObject.SetActive(false);
+                if (addButtonVisual != null)
+                {
+                    addButtonVisual.color = new Color(0f, 0f, 0f, 0f);
+                }
+
+                if (addButtonLabel != null)
+                {
+                    addButtonLabel.text = "✕";
+                    addButtonLabel.color = new Color(1f, 1f, 1f, 0.6f);
+                }
+
+                addButton.onClick.RemoveAllListeners();
+                addButton.onClick.AddListener(() => OnRemoveHistoryClicked(query));
             }
 
             var rowButton = row.GetComponent<Button>();
@@ -546,21 +687,15 @@ namespace Yobi.Presentation
             _activeResultRows.Add(row);
         }
 
-        private void OnAddToWatchlistClicked(CreatorSearchResult result, Button addButton, Text addButtonLabel)
+        private void OnAddToWatchlistClicked(CreatorSearchResult result, Button addButton, Image addButtonVisual, Text addButtonLabel)
         {
             if (_searchPanel == null)
             {
                 return;
             }
 
-            var addResult = _searchPanel.AddToWatchlist(result);
-
-            if (addButtonLabel != null)
-            {
-                addButtonLabel.text = addResult == WatchlistAddResult.AlreadyExists ? "已追蹤" : "已加落追蹤";
-            }
-
-            addButton.interactable = false;
+            _searchPanel.AddToWatchlist(result);
+            SetAddButtonAdded(addButton, addButtonVisual, addButtonLabel);
         }
 
         private void ClearResultRows()
