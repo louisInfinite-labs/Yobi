@@ -98,6 +98,7 @@ namespace Yobi.Presentation
 
             SetupResolutionOptions();
             SetupLanguageOptions();
+            NormalizeLoadedResolution();
             ApplyLoadedStateToControls();
             ApplyLoadedDisplaySettingsToScreen();
 
@@ -295,6 +296,32 @@ namespace Yobi.Presentation
             _isApplyingLoadedState = false;
         }
 
+        // A resolution saved while running on a different (e.g. higher-resolution) monitor may
+        // not appear in this display's _availableResolutions at all. ApplyLoadedStateToControls
+        // and ApplyLoadedDisplaySettingsToScreen both need to fall back to the first available
+        // entry in that case - but if only *they* fell back while _settings itself kept the
+        // stale, unsupported pair, the displayed/applied resolution and the persisted one would
+        // disagree the moment the user changed any other setting (Persist() rebuilds AppSettings
+        // from _settings, saving the stale pair right back). Normalizing _settings itself here,
+        // before either of those run, keeps every reader - controls, Screen, the saved file - in
+        // agreement from the very first frame.
+        private void NormalizeLoadedResolution()
+        {
+            if (_availableResolutions == null || _availableResolutions.Count == 0)
+            {
+                return;
+            }
+
+            var index = _availableResolutions.FindIndex(r => r.width == _settings.ResolutionWidth && r.height == _settings.ResolutionHeight);
+            if (index >= 0)
+            {
+                return;
+            }
+
+            var resolution = _availableResolutions[0];
+            Persist(resolutionWidth: resolution.width, resolutionHeight: resolution.height);
+        }
+
         // ApplyLoadedStateToControls only updates the Toggle/Dropdown visuals - it deliberately
         // runs its updates under _isApplyingLoadedState so OnFullscreenToggled/OnResolutionChanged
         // don't fire (and re-persist) while it's populating them from what was just loaded. But
@@ -302,18 +329,12 @@ namespace Yobi.Presentation
         // default resolution to the real window - the modal would just show the right values
         // without the app looking like it. This calls the same Screen APIs those two handlers
         // use, once, directly, so persisted display settings take effect on startup too.
+        // NormalizeLoadedResolution has already run by this point, so _settings.ResolutionWidth/
+        // Height is guaranteed to be one of _availableResolutions - no fallback lookup needed here.
         private void ApplyLoadedDisplaySettingsToScreen()
         {
             Screen.fullScreen = _settings.Fullscreen;
-
-            if (_availableResolutions == null || _availableResolutions.Count == 0)
-            {
-                return;
-            }
-
-            var index = _availableResolutions.FindIndex(r => r.width == _settings.ResolutionWidth && r.height == _settings.ResolutionHeight);
-            var resolution = _availableResolutions[index >= 0 ? index : 0];
-            Screen.SetResolution(resolution.width, resolution.height, Screen.fullScreenMode);
+            Screen.SetResolution(_settings.ResolutionWidth, _settings.ResolutionHeight, Screen.fullScreenMode);
         }
 
         private void OnFullscreenToggled(bool isFullscreen)
