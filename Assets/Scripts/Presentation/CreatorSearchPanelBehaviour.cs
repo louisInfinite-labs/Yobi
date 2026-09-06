@@ -240,6 +240,26 @@ namespace Yobi.Presentation
             return _searchCreatorsUseCase.SearchAsync(query, cancellationToken);
         }
 
+        // Entry point for MainSearchBarBehaviour's live-status-in-search-results display. Routed
+        // through this instance for the same reason SearchCreatorsAsync/AddToWatchlist are - one
+        // place owns Holodex access - though status lookups have no shared-state hazard of their
+        // own (GetCreatorStatusUseCase is stateless per call).
+        public async Task<CreatorStatus> GetCreatorStatusAsync(CreatorSearchResult result, CancellationToken cancellationToken)
+        {
+            var isWatchlisted = false;
+            foreach (var creator in _watchlistUseCase.GetAll())
+            {
+                if (creator.ChannelId == result.ChannelId)
+                {
+                    isWatchlisted = true;
+                    break;
+                }
+            }
+
+            var identity = new ChannelIdentity(result.ChannelId, result.DisplayName);
+            return await _creatorStatusUseCase.GetStatusAsync(identity, isWatchlisted, cancellationToken);
+        }
+
         // Entry point for MainSearchBarBehaviour's add-to-watchlist action. Routed through this
         // instance specifically (rather than the bar constructing its own ManageWatchlistUseCase)
         // because _watchlistUseCase is loaded once into memory and never reloaded from disk - a

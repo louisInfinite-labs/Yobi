@@ -29,6 +29,9 @@ namespace Yobi.Presentation
         private InputField searchInputField;
 
         [SerializeField]
+        private Button searchIconButton;
+
+        [SerializeField]
         private Image backgroundImage;
 
         [SerializeField]
@@ -96,6 +99,11 @@ namespace Yobi.Presentation
             focusTrigger.triggers.Add(selectEntry);
 
             searchInputField.onValueChanged.AddListener(OnInputValueChanged);
+
+            if (searchIconButton != null)
+            {
+                searchIconButton.onClick.AddListener(OnSearchIconClicked);
+            }
         }
 
         private void OnDestroy()
@@ -196,6 +204,113 @@ namespace Yobi.Presentation
             }
         }
 
+        // Explicit click, not per-keystroke: checks every matched creator's live status, which
+        // costs one Holodex call per match on top of the search call itself - fine for a
+        // deliberate click, not something to also fire on every character typed.
+        private async void OnSearchIconClicked()
+        {
+            var query = searchInputField.text;
+            if (!IsSearchEligible(query))
+            {
+                return;
+            }
+
+            _requestCts?.Cancel();
+            _requestCts?.Dispose();
+            _requestCts = new CancellationTokenSource();
+            var requestToken = _requestCts.Token;
+
+            if (_searchPanel == null)
+            {
+                return;
+            }
+
+            IReadOnlyList<CreatorSearchResult> searchResults;
+            try
+            {
+                searchResults = await _searchPanel.SearchCreatorsAsync(query, requestToken);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MainSearchBar] Creator search failed: {ex.Message}");
+                return;
+            }
+
+            if (requestToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            if (searchResults.Count == 0)
+            {
+                ShowMatches(searchResults);
+                return;
+            }
+
+            // Fetched in parallel rather than one at a time - the user explicitly wants every
+            // match's status in one click, and awaiting them sequentially would multiply the
+            // wait by the match count for no benefit (each call is independent).
+            var statusTasks = new Task<CreatorStatus>[searchResults.Count];
+            for (var i = 0; i < searchResults.Count; i++)
+            {
+                statusTasks[i] = GetStatusSafeAsync(searchResults[i], requestToken);
+            }
+
+            var statuses = await Task.WhenAll(statusTasks);
+
+            if (requestToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            ShowMatchesWithStatus(searchResults, statuses);
+        }
+
+        // A single failed status lookup (one creator's Holodex call erroring) must not blank out
+        // the whole result list - null here just means "no status badge" for that one row.
+        private async Task<CreatorStatus> GetStatusSafeAsync(CreatorSearchResult result, CancellationToken cancellationToken)
+        {
+            try
+            {
+                return await _searchPanel.GetCreatorStatusAsync(result, cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[MainSearchBar] Status check failed for {result.DisplayName}: {ex.Message}");
+                return null;
+            }
+        }
+
+        // Chinese/Japanese: a single character is already a meaningful, narrow-enough prefix to
+        // search on. Latin input has no such minimum-usefulness guarantee - one or two letters
+        // matches far too broadly - so it needs at least 3 characters before this will fire.
+        private static bool IsSearchEligible(string query)
+        {
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return false;
+            }
+
+            foreach (var c in query)
+            {
+                // 一-鿿: CJK Unified Ideographs (Han). ぀-ヿ: Hiragana + Katakana.
+                if ((c >= '\u4E00' && c <= '\u9FFF') || (c >= '\u3040' && c <= '\u30FF'))
+                {
+                    return true;
+                }
+            }
+
+            return query.Trim().Length >= 3;
+        }
+
         private async void RunThinkingTicker(CancellationToken token)
         {
             var elapsedSeconds = 0;
@@ -280,11 +395,52 @@ namespace Yobi.Presentation
 
             foreach (var result in results)
             {
-                CreateResultRow(result);
+                CreateResultRow(result, null);
             }
         }
 
-        private void CreateResultRow(CreatorSearchResult result)
+        private void ShowMatchesWithStatus(IReadOnlyList<CreatorSearchResult> results, IReadOnlyList<CreatorStatus> statuses)
+        {
+            SetAnswerVisible(false);
+            resultsContainer.gameObject.SetActive(true);
+            ClearResultRows();
+
+            for (var i = 0; i < results.Count; i++)
+            {
+                CreateResultRow(results[i], statuses[i]);
+            }
+        }
+
+        // Live: a red dot + "Live". Upcoming within Holodex's own 24h window: a countdown like
+        // "23分後" or "1小時5分後" rather than a clock time - a relative "how soon" reads faster
+        // in a short search-result row than an absolute HH:mm would. Neither: no badge at all.
+        private static string FormatLiveStatusLabel(CreatorStatus status)
+        {
+            if (status == null)
+            {
+                return string.Empty;
+            }
+
+            if (status.LiveStatus == CreatorLiveStatus.Live)
+            {
+                return "<color=#FF3B30>●</color> Live";
+            }
+
+            if (status.LiveStatus == CreatorLiveStatus.Upcoming && status.UpcomingLivestreams.Count > 0)
+            {
+                // Already sorted ascending by scheduled start (HolodexApiClient.GetStatusAsync) -
+                // the soonest one is what a "starts in X" countdown should read off.
+                var soonest = status.UpcomingLivestreams[0];
+                var remainingMinutes = Mathf.Max(0, (int)(soonest.ScheduledStartUtc - System.DateTime.UtcNow).TotalMinutes);
+                var hours = remainingMinutes / 60;
+                var minutes = remainingMinutes % 60;
+                return hours > 0 ? $"{hours}小時{minutes}分後" : $"{minutes}分後";
+            }
+
+            return string.Empty;
+        }
+
+        private void CreateResultRow(CreatorSearchResult result, CreatorStatus status)
         {
             var row = Instantiate(resultRowTemplate, resultsContainer);
             row.SetActive(true);
@@ -292,7 +448,13 @@ namespace Yobi.Presentation
             var nameText = row.transform.Find("NameText")?.GetComponent<Text>();
             if (nameText != null)
             {
-                nameText.text = $"{result.DisplayName}  ({result.ChannelId})";
+                nameText.text = result.DisplayName;
+            }
+
+            var statusText = row.transform.Find("StatusText")?.GetComponent<Text>();
+            if (statusText != null)
+            {
+                statusText.text = FormatLiveStatusLabel(status);
             }
 
             var addButton = row.transform.Find("AddButton")?.GetComponent<Button>();
@@ -318,6 +480,12 @@ namespace Yobi.Presentation
             if (nameText != null)
             {
                 nameText.text = query;
+            }
+
+            var statusText = row.transform.Find("StatusText")?.GetComponent<Text>();
+            if (statusText != null)
+            {
+                statusText.gameObject.SetActive(false);
             }
 
             var addButton = row.transform.Find("AddButton")?.GetComponent<Button>();

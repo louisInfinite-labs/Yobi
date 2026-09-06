@@ -116,25 +116,104 @@ namespace Yobi.EditorTools
             if (existing != null)
             {
                 panelGo = existing.gameObject;
+                DestroyGeneratedChild(panelGo.transform, "HeaderButton");
+                DestroyGeneratedChild(panelGo.transform, "ContentPanel");
+
+                // A scene built before this collapsible restructure parented RowContainer
+                // directly under the root (there was no ContentPanel wrapper yet) - left alone,
+                // that old copy stays a permanently-active sibling of the new ContentPanel,
+                // rendering its template row's default-gray Dot/blank text at all times
+                // regardless of the collapse toggle. The new RowContainer this method creates
+                // lives inside ContentPanel instead, so this old direct child is always stale.
                 DestroyGeneratedChild(panelGo.transform, "RowContainer");
+
+                // A scene built before this collapsible restructure has an older RoomReminderList
+                // root: RectTransform + Image only, no VerticalLayoutGroup/ContentSizeFitter, and
+                // the background now belongs to HeaderButton/ContentPanel individually rather than
+                // sitting on the root. Migrate it in place rather than requiring a from-scratch scene.
+                var staleRootImage = panelGo.GetComponent<Image>();
+                if (staleRootImage != null)
+                {
+                    Object.DestroyImmediate(staleRootImage);
+                }
+
+                if (panelGo.GetComponent<VerticalLayoutGroup>() == null)
+                {
+                    panelGo.AddComponent<VerticalLayoutGroup>();
+                }
+
+                if (panelGo.GetComponent<ContentSizeFitter>() == null)
+                {
+                    panelGo.AddComponent<ContentSizeFitter>();
+                }
             }
             else
             {
-                panelGo = new GameObject("RoomReminderList", typeof(RectTransform), typeof(Image));
+                panelGo = new GameObject("RoomReminderList", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
                 panelGo.transform.SetParent(canvasTransform, false);
-                panelGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.45f);
             }
 
+            // Collapsed by default, expanding downward from the header - width stays fixed at
+            // 220 but height is driven by ContentSizeFitter (header alone when collapsed, header
+            // + the 160-tall content panel once expanded), rather than the old fixed 220x160
+            // always-visible panel.
             var rect = panelGo.GetComponent<RectTransform>();
             rect.anchorMin = new Vector2(1f, 1f);
             rect.anchorMax = new Vector2(1f, 1f);
             rect.pivot = new Vector2(1f, 1f);
             rect.anchoredPosition = new Vector2(-20f, -20f);
-            rect.sizeDelta = new Vector2(220f, 160f);
+            rect.sizeDelta = new Vector2(220f, 0f);
+
+            var rootLayout = panelGo.GetComponent<VerticalLayoutGroup>();
+            rootLayout.childControlWidth = true;
+            rootLayout.childControlHeight = true;
+            rootLayout.childForceExpandWidth = true;
+            rootLayout.childForceExpandHeight = false;
+            panelGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+
+            var headerButton = CreateReminderHeaderButton(panelGo.transform, out var headerLabel);
+            var contentPanel = CreateReminderContentPanel(panelGo.transform, out var containerRect, out var rowTemplate);
+
+            var behaviour = panelGo.GetComponent<RoomReminderListBehaviour>();
+            if (behaviour == null)
+            {
+                behaviour = panelGo.AddComponent<RoomReminderListBehaviour>();
+            }
+
+            var so = new SerializedObject(behaviour);
+            so.FindProperty("headerButton").objectReferenceValue = headerButton;
+            so.FindProperty("headerLabel").objectReferenceValue = headerLabel;
+            so.FindProperty("contentPanel").objectReferenceValue = contentPanel;
+            so.FindProperty("rowContainer").objectReferenceValue = containerRect;
+            so.FindProperty("rowTemplate").objectReferenceValue = rowTemplate;
+            so.ApplyModifiedPropertiesWithoutUndo();
+        }
+
+        private static Button CreateReminderHeaderButton(Transform parent, out Text label)
+        {
+            var go = new GameObject("HeaderButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+            go.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.45f);
+            go.GetComponent<LayoutElement>().preferredHeight = 26f;
+
+            label = CreateText(go.transform, "Text", "List Status ▼");
+            label.fontSize = 12;
+            label.alignment = TextAnchor.MiddleCenter;
+            SetupStretch(label.GetComponent<RectTransform>(), new Vector2(8f, 0f), new Vector2(-8f, 0f));
+
+            return go.GetComponent<Button>();
+        }
+
+        private static GameObject CreateReminderContentPanel(Transform parent, out RectTransform containerRect, out GameObject rowTemplate)
+        {
+            var panelGo = new GameObject("ContentPanel", typeof(RectTransform), typeof(Image), typeof(LayoutElement));
+            panelGo.transform.SetParent(parent, false);
+            panelGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.45f);
+            panelGo.GetComponent<LayoutElement>().preferredHeight = 160f;
 
             var containerGo = new GameObject("RowContainer", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
             containerGo.transform.SetParent(panelGo.transform, false);
-            var containerRect = containerGo.GetComponent<RectTransform>();
+            containerRect = containerGo.GetComponent<RectTransform>();
             containerRect.anchorMin = Vector2.zero;
             containerRect.anchorMax = Vector2.one;
             containerRect.offsetMin = new Vector2(8f, 8f);
@@ -148,18 +227,13 @@ namespace Yobi.EditorTools
             containerLayout.childForceExpandHeight = false;
             containerGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.Unconstrained;
 
-            var rowTemplate = CreateReminderRowTemplate(containerRect);
+            rowTemplate = CreateReminderRowTemplate(containerRect);
 
-            var behaviour = panelGo.GetComponent<RoomReminderListBehaviour>();
-            if (behaviour == null)
-            {
-                behaviour = panelGo.AddComponent<RoomReminderListBehaviour>();
-            }
+            // Collapsed by default - RoomReminderListBehaviour toggles this via the header
+            // button click, matching the "list status ▼, click to open" layout asked for.
+            panelGo.SetActive(false);
 
-            var so = new SerializedObject(behaviour);
-            so.FindProperty("rowContainer").objectReferenceValue = containerRect;
-            so.FindProperty("rowTemplate").objectReferenceValue = rowTemplate;
-            so.ApplyModifiedPropertiesWithoutUndo();
+            return panelGo;
         }
 
         private static GameObject CreateReminderRowTemplate(RectTransform container)
