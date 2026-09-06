@@ -53,6 +53,7 @@ namespace Yobi.Presentation
         private IQueryHistoryRepository _queryHistoryRepository;
         private QueryHistory _queryHistory;
         private CancellationTokenSource _requestCts;
+        private int _iconPointerDownFrame = -1;
 
         private readonly List<GameObject> _activeResultRows = new List<GameObject>();
 
@@ -103,6 +104,23 @@ namespace Yobi.Presentation
             if (searchIconButton != null)
             {
                 searchIconButton.onClick.AddListener(OnSearchIconClicked);
+
+                // Clicking this button while the input field is focused makes Unity fire the
+                // field's onEndEdit (deselection, as part of processing the click) before the
+                // button's own onClick - both within the same frame. Left alone, that runs
+                // SubmitQuery's search-and-history-save first, immediately superseded by this
+                // button's own search. PointerDown fires at the very start of that same click,
+                // before either onEndEdit or onClick, so marking the frame there lets SubmitQuery
+                // recognize and skip a submit it didn't actually cause.
+                var iconTrigger = searchIconButton.gameObject.GetComponent<EventTrigger>();
+                if (iconTrigger == null)
+                {
+                    iconTrigger = searchIconButton.gameObject.AddComponent<EventTrigger>();
+                }
+
+                var pointerDownEntry = new EventTrigger.Entry { eventID = EventTriggerType.PointerDown };
+                pointerDownEntry.callback.AddListener(_ => _iconPointerDownFrame = Time.frameCount);
+                iconTrigger.triggers.Add(pointerDownEntry);
             }
         }
 
@@ -114,6 +132,14 @@ namespace Yobi.Presentation
 
         private async void SubmitQuery(string query)
         {
+            // This field losing focus because the search icon button was just pressed fires
+            // onEndEdit (and this method) before that button's own onClick - not a real submit,
+            // just a side effect of the click sequence. See the PointerDown wiring in Awake().
+            if (_iconPointerDownFrame == Time.frameCount)
+            {
+                return;
+            }
+
             if (string.IsNullOrWhiteSpace(query))
             {
                 return;
@@ -260,7 +286,19 @@ namespace Yobi.Presentation
                 statusTasks[i] = GetStatusSafeAsync(searchResults[i], requestToken);
             }
 
-            var statuses = await Task.WhenAll(statusTasks);
+            // GetStatusSafeAsync rethrows OperationCanceledException (rather than swallowing it
+            // like other failures) so a newer request cancelling this one still surfaces as a
+            // cancellation here - but that means Task.WhenAll itself can throw it, which would
+            // otherwise escape this async void method as an unhandled exception.
+            CreatorStatus[] statuses;
+            try
+            {
+                statuses = await Task.WhenAll(statusTasks);
+            }
+            catch (OperationCanceledException) when (requestToken.IsCancellationRequested)
+            {
+                return;
+            }
 
             if (requestToken.IsCancellationRequested)
             {
