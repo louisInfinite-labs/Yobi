@@ -14,5 +14,11 @@ namespace Yobi.Domain.Interfaces
         void Schedule(ScheduledReminderNotification notification);
 
         void Cancel(string id);
+
+        // For turning notifications off entirely (e.g. the Settings modal's toggle): the
+        // reconciling caller (SyncScheduledRemindersUseCase) only tracks what it scheduled
+        // in-memory during the current run, so it has no way to Cancel() by id anything left
+        // over from a previous session once that in-memory state doesn't exist yet.
+        void CancelAll();
     }
 }

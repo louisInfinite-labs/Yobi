@@ -1,23 +1,17 @@
-using AOT;
 using UnityEngine;
 using UnityEngine.UI;
-using Yobi.Infrastructure.FilePicker;
 
 namespace Yobi.Presentation
 {
-    // The icon buttons along the Room UI's edge (Wallpaper / Switch Mode) - Search and AI Query
-    // used to live here too, toggling separate debug panels via CanvasGroup, but were replaced by
-    // MainSearchBarBehaviour's always-visible unified search bar.
+    // The circular icon buttons along the Room UI's edge (Switch Mode, plus the Settings button
+    // SettingsModalUISetup adds to the same dock) - styled to blend into the background per the
+    // reference layout (white fill, black outline, slight transparency) rather than opaque
+    // debug-UI buttons. Search, AI Query, and Wallpaper used to live here too: Search/AI were
+    // replaced by MainSearchBarBehaviour's always-visible unified search bar, and Wallpaper moved
+    // into the Settings modal's Display tab.
     public sealed class RoomButtonDockBehaviour : MonoBehaviour
     {
-        // Rooted so the GC can't collect it - see TrayIconBehaviour for why.
-        private static readonly MacFilePicker.FilePickedCallback WallpaperPickedDelegate = OnWallpaperPicked;
-
-        // Static because the callback is static (required for MonoPInvokeCallback).
-        private static RoomBackgroundBehaviour _roomBackground;
-
-        [SerializeField]
-        private Button wallpaperButton;
+        private const int CircleTextureDiameter = 128;
 
         [SerializeField]
         private Button switchModeButton;
@@ -27,11 +21,16 @@ namespace Yobi.Presentation
         private void Start()
         {
             _companionWindow = FindFirstObjectByType<DesktopCompanionWindowBehaviour>();
-            _roomBackground = FindFirstObjectByType<RoomBackgroundBehaviour>();
 
-            if (wallpaperButton != null)
+            // Applied to every Button under this dock, not just the ones this script has fields
+            // for, so a button another tool adds to the same dock (SettingsModalUISetup's
+            // Settings button) automatically gets the same circular treatment without this
+            // script needing to know about it. Each starts as a plain square Image (border) with
+            // a square "Fill" child Image from the Editor tool - the actual circular shape is
+            // generated in code here rather than as a checked-in art asset.
+            foreach (var button in GetComponentsInChildren<Button>(includeInactive: true))
             {
-                wallpaperButton.onClick.AddListener(OnWallpaperButtonClicked);
+                ApplyCircularSprites(button);
             }
 
             if (switchModeButton != null)
@@ -40,23 +39,59 @@ namespace Yobi.Presentation
             }
         }
 
-        private void OnWallpaperButtonClicked()
+        // Paints a real circular shape onto a button's border Image and its "Fill" child Image
+        // using a soft 1px edge so the circle doesn't look jagged.
+        private static void ApplyCircularSprites(Button button)
         {
-            // MacFilePicker is a macOS-only native plugin - see TrayIconBehaviour's identical
-            // gate for the same reason.
-            if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer)
+            if (button == null)
             {
-                MacFilePicker.ShowImageOpenPanel(WallpaperPickedDelegate);
+                return;
+            }
+
+            var borderImage = button.GetComponent<Image>();
+            if (borderImage != null)
+            {
+                borderImage.sprite = CreateCircleSprite(CircleTextureDiameter, Color.white);
+                borderImage.type = Image.Type.Simple;
+            }
+
+            var fillTransform = button.transform.Find("Fill");
+            var fillImage = fillTransform != null ? fillTransform.GetComponent<Image>() : null;
+            if (fillImage != null)
+            {
+                fillImage.sprite = CreateCircleSprite(CircleTextureDiameter, Color.white);
+                fillImage.type = Image.Type.Simple;
             }
         }
 
-        [MonoPInvokeCallback(typeof(MacFilePicker.FilePickedCallback))]
-        private static void OnWallpaperPicked(string path)
+        private static Sprite CreateCircleSprite(int diameter, Color tint)
         {
-            if (_roomBackground != null)
+            var texture = new Texture2D(diameter, diameter, TextureFormat.RGBA32, false);
+            var center = (diameter - 1) / 2f;
+            var radius = diameter / 2f;
+            var pixels = new Color32[diameter * diameter];
+
+            for (var y = 0; y < diameter; y++)
             {
-                _roomBackground.SetWallpaper(path);
+                for (var x = 0; x < diameter; x++)
+                {
+                    var dx = x - center;
+                    var dy = y - center;
+                    var distance = Mathf.Sqrt(dx * dx + dy * dy);
+
+                    // Anti-aliased edge: full alpha well inside the radius, fading to 0 over the
+                    // outermost pixel instead of a hard, jagged boundary.
+                    var alpha = Mathf.Clamp01(radius - distance);
+                    var pixelColor = tint;
+                    pixelColor.a *= alpha;
+                    pixels[(y * diameter) + x] = pixelColor;
+                }
             }
+
+            texture.SetPixels32(pixels);
+            texture.Apply();
+
+            return Sprite.Create(texture, new Rect(0f, 0f, diameter, diameter), new Vector2(0.5f, 0.5f));
         }
 
         private void OnSwitchModeButtonClicked()

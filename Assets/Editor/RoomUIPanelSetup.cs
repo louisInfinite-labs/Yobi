@@ -205,13 +205,27 @@ namespace Yobi.EditorTools
             if (existing != null)
             {
                 dockGo = existing.gameObject;
-                DestroyGeneratedChild(dockGo.transform, "SearchButton");
-                DestroyGeneratedChild(dockGo.transform, "AiQueryButton");
-                // ^ Legacy children from before Search/AI moved to MainSearchBarBehaviour - still
-                // destroyed here so a scene built by an older version of this tool gets cleaned up
-                // on rerun, even though nothing (re)creates them below anymore.
-                DestroyGeneratedChild(dockGo.transform, "WallpaperButton");
-                DestroyGeneratedChild(dockGo.transform, "SwitchModeButton");
+
+                // Destroy every existing child rather than a fixed set of names: an older
+                // version of this tool created flat "SearchButton"/"AiQueryButton"/
+                // "WallpaperButton"/etc. children with no "...Container" wrapper (Search/AI
+                // moved to MainSearchBarBehaviour's unified search bar, Wallpaper moved into the
+                // Settings modal's Display tab - neither is recreated by this method anymore), so
+                // a name-based cleanup here would leave those orphaned alongside the newly
+                // (re)created ones. "SettingsButtonContainer" is the one deliberate exception -
+                // it's added to this same dock by SettingsModalUISetup.EnsureSettingsButtonInDock,
+                // not by this method, which only (re)creates Mode below; destroying it here would
+                // remove the Settings modal's only entry point until someone reruns that other tool.
+                for (var i = dockGo.transform.childCount - 1; i >= 0; i--)
+                {
+                    var child = dockGo.transform.GetChild(i);
+                    if (child.name == "SettingsButtonContainer")
+                    {
+                        continue;
+                    }
+
+                    Object.DestroyImmediate(child.gameObject);
+                }
             }
             else
             {
@@ -235,8 +249,7 @@ namespace Yobi.EditorTools
             layout.childForceExpandHeight = false;
             dockGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
-            var wallpaperButton = CreateCircularButton(dockGo.transform, "WallpaperButton", "Wall");
-            var switchModeButton = CreateCircularButton(dockGo.transform, "SwitchModeButton", "Mode");
+            var switchModeButton = RoomButtonDockIconHelper.CreateCircularButtonWithCaption(dockGo.transform, "SwitchModeButton", MaterialIconSwap, "Mode", UiFont, IconFont);
 
             var behaviour = dockGo.GetComponent<RoomButtonDockBehaviour>();
             if (behaviour == null)
@@ -245,39 +258,18 @@ namespace Yobi.EditorTools
             }
 
             var so = new SerializedObject(behaviour);
-            so.FindProperty("wallpaperButton").objectReferenceValue = wallpaperButton;
             so.FindProperty("switchModeButton").objectReferenceValue = switchModeButton;
             so.ApplyModifiedPropertiesWithoutUndo();
         }
 
-        // White fill, black border ring, slight transparency - per the reference layout's
-        // buttons blending into the background rather than opaque debug-UI buttons. Built from
-        // two nested Images (border + inset fill) rather than UI Outline, which only draws a
-        // one-directional shadow-like effect, not a ring on all sides.
-        private static Button CreateCircularButton(Transform parent, string name, string label)
-        {
-            var borderGo = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
-            borderGo.transform.SetParent(parent, false);
-            borderGo.GetComponent<RectTransform>().sizeDelta = new Vector2(44f, 44f);
-            borderGo.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0.85f);
+        // Material Icons (Assets/Fonts/MaterialIcons-Regular.ttf, Apache License 2.0) - glyphs
+        // addressed by their standard codepoints rather than the newer "Material Symbols" set,
+        // since this is the older, stable "MaterialIcons-Regular" font.
+        private const string MaterialIconSwap = "\uE8D4";
 
-            var fillGo = new GameObject("Fill", typeof(RectTransform), typeof(Image));
-            fillGo.transform.SetParent(borderGo.transform, false);
-            SetupStretch(fillGo.GetComponent<RectTransform>(), new Vector2(2f, 2f), new Vector2(-2f, -2f));
-            fillGo.GetComponent<Image>().color = new Color(1f, 1f, 1f, 0.85f);
-
-            var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
-            textGo.transform.SetParent(fillGo.transform, false);
-            var text = textGo.GetComponent<Text>();
-            text.font = UiFont;
-            text.text = label;
-            text.color = Color.black;
-            text.fontSize = 10;
-            text.alignment = TextAnchor.MiddleCenter;
-            SetupStretch(textGo.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero);
-
-            return borderGo.GetComponent<Button>();
-        }
+        private static Font _iconFont;
+        private static Font IconFont =>
+            _iconFont != null ? _iconFont : (_iconFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/MaterialIcons-Regular.ttf"));
 
         private static Text CreateText(Transform parent, string name, string content)
         {

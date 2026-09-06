@@ -122,12 +122,26 @@ namespace Yobi.Presentation
             _reminderConfiguration = _reminderConfigurationRepository.Load(defaultReminderConfiguration);
 
             // Pre-scheduled OS notifications (Yobi_* native calls) only exist for macOS - other
-            // platforms simply keep the console-only reminder path until Phase 4 cross-platform work.
-            if (UnityEngine.Application.platform == RuntimePlatform.OSXPlayer || UnityEngine.Application.platform == RuntimePlatform.OSXEditor)
+            // platforms simply keep the console-only reminder path until Phase 4 cross-platform
+            // work. Also gated on the Settings modal's "Other" tab toggle - checked once here
+            // (takes effect on next launch, not live) rather than threading a live subscription
+            // through this already-large Awake().
+            var notificationsEnabled = new LocalFileAppSettingsRepository().Load(new AppSettings("zh-TW", Screen.currentResolution.width, Screen.currentResolution.height, Screen.fullScreen, false, 1f, true)).NotificationsEnabled;
+            var isMacNotificationPlatform = UnityEngine.Application.platform == RuntimePlatform.OSXPlayer || UnityEngine.Application.platform == RuntimePlatform.OSXEditor;
+            if (notificationsEnabled && isMacNotificationPlatform)
             {
                 var scheduler = new MacNotificationScheduler();
                 scheduler.RequestAuthorization();
                 _syncScheduledRemindersUseCase = new SyncScheduledRemindersUseCase(scheduler);
+            }
+            else if (isMacNotificationPlatform)
+            {
+                // SyncScheduledRemindersUseCase only tracks what it scheduled in-memory during
+                // the current run, so once notifications are toggled off it has nothing to
+                // Cancel() by id for anything left over from a session when they were on -
+                // without this, an already-scheduled reminder could still fire after the user
+                // just turned notifications off.
+                new MacNotificationScheduler().CancelAll();
             }
 
             try
