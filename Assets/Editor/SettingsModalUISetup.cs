@@ -20,7 +20,7 @@ namespace Yobi.EditorTools
             _iconFont != null ? _iconFont : (_iconFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/MaterialIcons-Regular.ttf"));
 
         [MenuItem("Tools/Yobi/Setup Settings Modal")]
-        private static void SetupSettingsModal()
+        internal static void SetupSettingsModal()
         {
             var scene = EditorSceneManager.GetActiveScene();
             if (scene.path != ScenePath)

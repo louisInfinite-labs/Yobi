@@ -45,9 +45,12 @@ void Yobi_MakeWindowTransparent(void)
     window.backgroundColor = [NSColor clearColor];
     window.hasShadow = NO;
 
-    // Hide the title bar / traffic-light buttons to get a borderless *look* - a companion
-    // character window shouldn't look like a normal document window. Dragging the character
-    // itself (rather than a title bar) is a separate, not-yet-implemented feature.
+    // Hide the title bar (text + background) to get a borderless *look* - a companion character
+    // window shouldn't look like a normal document window. The traffic-light buttons (close/
+    // miniaturize/zoom) stay visible and clickable regardless - a fully chromeless window with no
+    // title bar left no way to close or minimize the app except Cmd+Q/task-switching, which was
+    // the actual complaint this responds to. Dragging the character itself (rather than a title
+    // bar) is a separate, not-yet-implemented feature.
     //
     // Deliberately NOT `window.styleMask = NSWindowStyleMaskBorderless`: replacing the style
     // mask of a window that still has full-screen primary collection behavior (Unity's
@@ -57,9 +60,9 @@ void Yobi_MakeWindowTransparent(void)
     window.titlebarAppearsTransparent = YES;
     window.titleVisibility = NSWindowTitleHidden;
     window.styleMask |= NSWindowStyleMaskFullSizeContentView;
-    [window standardWindowButton:NSWindowCloseButton].hidden = YES;
-    [window standardWindowButton:NSWindowMiniaturizeButton].hidden = YES;
-    [window standardWindowButton:NSWindowZoomButton].hidden = YES;
+    [window standardWindowButton:NSWindowCloseButton].hidden = NO;
+    [window standardWindowButton:NSWindowMiniaturizeButton].hidden = NO;
+    [window standardWindowButton:NSWindowZoomButton].hidden = NO;
 
     // The NSWindow's own transparency isn't sufficient by itself: Unity renders through a
     // CAMetalLayer on the content view, and that layer defaults to opaque regardless of the

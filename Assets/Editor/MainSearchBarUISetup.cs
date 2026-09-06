@@ -20,12 +20,18 @@ namespace Yobi.EditorTools
         // glyph, addressed by its standard codepoint - see RoomUIPanelSetup's identical convention.
         private const string MaterialIconSearch = "\uE8B6";
 
+        // AI Mode toggle uses a plain "AI" text label rather than an icon glyph: this project's
+        // MaterialIcons-Regular.ttf is the older, stable ~932-icon set (see RoomUIPanelSetup's
+        // comment on the same font) which predates icons like auto_awesome/smart_toy, so there is
+        // no glyph in it to reliably address by codepoint.
+        private const string AiModeLabel = "AI";
+
         private static Font _iconFont;
         private static Font IconFont =>
             _iconFont != null ? _iconFont : (_iconFont = AssetDatabase.LoadAssetAtPath<Font>("Assets/Fonts/MaterialIcons-Regular.ttf"));
 
         [MenuItem("Tools/Yobi/Setup Main Search Bar")]
-        private static void SetupMainSearchBar()
+        internal static void SetupMainSearchBar()
         {
             var scene = EditorSceneManager.GetActiveScene();
             if (scene.path != ScenePath)
@@ -69,13 +75,13 @@ namespace Yobi.EditorTools
             DestroyGeneratedChild(barGo.transform, "ResultsContainer");
             DestroyGeneratedChild(barGo.transform, "AnswerText");
 
-            var inputField = CreateInputField(barGo.transform, "SearchInputField", out var searchIconButton);
+            var inputField = CreateInputField(barGo.transform, "SearchInputField", out var searchIconButton, out var aiModeToggleButton, out var aiModeToggleBackground);
             var backgroundImage = inputField.GetComponent<Image>();
 
             var resultsContainer = CreateResultsContainer(barGo.transform, out var resultRowTemplate);
             var answerText = CreateAnswerText(barGo.transform, "AnswerText");
 
-            WireReferences(behaviour, inputField, searchIconButton, backgroundImage, resultsContainer, resultRowTemplate, answerText);
+            WireReferences(behaviour, inputField, searchIconButton, aiModeToggleButton, aiModeToggleBackground, backgroundImage, resultsContainer, resultRowTemplate, answerText);
 
             EditorUtility.SetDirty(barGo);
             EditorSceneManager.MarkSceneDirty(scene);
@@ -176,7 +182,7 @@ namespace Yobi.EditorTools
         // A plain white square placeholder - MainSearchBarBehaviour paints the actual rounded-pill
         // shape onto this Image at runtime (generated in code, not a checked-in art asset), same
         // convention as the dock's circular buttons.
-        private static InputField CreateInputField(Transform parent, string name, out Button searchIconButton)
+        private static InputField CreateInputField(Transform parent, string name, out Button searchIconButton, out Button aiModeToggleButton, out Image aiModeToggleBackground)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(InputField), typeof(LayoutElement));
             go.transform.SetParent(parent, false);
@@ -186,15 +192,22 @@ namespace Yobi.EditorTools
             layoutElement.flexibleWidth = 1f;
             layoutElement.preferredHeight = 44f;
 
-            // Right edge reserved for the search icon button below (52px, not the full 20px
-            // margin every other side uses) so typed/placeholder text never runs under it.
+            // Right edge reserved for the AI Mode toggle + search icon buttons below (92px, not
+            // the full 20px margin every other side uses) so typed/placeholder text never runs
+            // under either of them.
             var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
             textGo.transform.SetParent(go.transform, false);
             var text = textGo.GetComponent<Text>();
             text.font = UiFont;
             text.color = Color.black;
             text.alignment = TextAnchor.MiddleLeft;
-            SetupStretch(textGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-52f, -6f));
+            // 12, not Unity's Text default (14) - at 14 the placeholder string below didn't fit
+            // the ~188px available (300 bar width minus the 20+92 reserved margins) on one line
+            // and wrapped to two, which a single-line pill input shouldn't do.
+            text.fontSize = 12;
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+            SetupStretch(textGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-92f, -6f));
 
             var placeholderGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
             placeholderGo.transform.SetParent(go.transform, false);
@@ -204,13 +217,17 @@ namespace Yobi.EditorTools
             placeholder.color = new Color(0f, 0f, 0f, 0.4f);
             placeholder.fontStyle = FontStyle.Italic;
             placeholder.alignment = TextAnchor.MiddleLeft;
-            SetupStretch(placeholderGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-52f, -6f));
+            placeholder.fontSize = 12;
+            placeholder.horizontalOverflow = HorizontalWrapMode.Overflow;
+            placeholder.verticalOverflow = VerticalWrapMode.Overflow;
+            SetupStretch(placeholderGo.GetComponent<RectTransform>(), new Vector2(20f, 6f), new Vector2(-92f, -6f));
 
             var inputField = go.GetComponent<InputField>();
             inputField.textComponent = text;
             inputField.placeholder = placeholder;
 
             searchIconButton = CreateSearchIconButton(go.transform);
+            aiModeToggleButton = CreateAiModeToggleButton(go.transform, out aiModeToggleBackground);
 
             return inputField;
         }
@@ -244,6 +261,42 @@ namespace Yobi.EditorTools
             iconText.fontSize = 20;
             iconText.alignment = TextAnchor.MiddleCenter;
             SetupStretch(iconGo.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero);
+
+            return button;
+        }
+
+        // Sits immediately left of the search icon button, inside the same pill. Off by default
+        // (near-invisible background, matching the search icon's own resting look) - MainSearchBar
+        // Behaviour fills the background in with an accent color once toggled on, so the "AI"
+        // label alone doesn't have to carry that state.
+        private static Button CreateAiModeToggleButton(Transform parent, out Image background)
+        {
+            var go = new GameObject("AiModeToggleButton", typeof(RectTransform), typeof(Image), typeof(Button));
+            go.transform.SetParent(parent, false);
+
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = new Vector2(1f, 0.5f);
+            rect.anchorMax = new Vector2(1f, 0.5f);
+            rect.pivot = new Vector2(1f, 0.5f);
+            // -8 (right margin) - 36 (search icon width) - 4 (gap) = -48.
+            rect.anchoredPosition = new Vector2(-48f, 0f);
+            rect.sizeDelta = new Vector2(36f, 36f);
+
+            background = go.GetComponent<Image>();
+            background.color = new Color(1f, 1f, 1f, 0f);
+            var button = go.GetComponent<Button>();
+            button.targetGraphic = background;
+
+            var labelGo = new GameObject("Label", typeof(RectTransform), typeof(Text));
+            labelGo.transform.SetParent(go.transform, false);
+            var label = labelGo.GetComponent<Text>();
+            label.font = UiFont;
+            label.text = AiModeLabel;
+            label.fontStyle = FontStyle.Bold;
+            label.color = new Color(0f, 0f, 0f, 0.6f);
+            label.fontSize = 12;
+            label.alignment = TextAnchor.MiddleCenter;
+            SetupStretch(labelGo.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero);
 
             return button;
         }
@@ -284,6 +337,9 @@ namespace Yobi.EditorTools
 
             var layout = row.GetComponent<HorizontalLayoutGroup>();
             layout.spacing = 10f;
+            // 16px left/right - NameText used to start flush against the row's own background
+            // rect (no padding at all), reading as uncomfortably tight against that edge.
+            layout.padding = new RectOffset(16, 16, 0, 0);
             layout.childAlignment = TextAnchor.MiddleLeft;
             layout.childControlWidth = true;
             layout.childControlHeight = true;
@@ -296,6 +352,12 @@ namespace Yobi.EditorTools
             nameLayout.flexibleWidth = 1f;
             nameText.color = Color.white;
             nameText.alignment = TextAnchor.MiddleLeft;
+            nameText.fontSize = 12;
+            // Wrap instead of overflow, now that the row itself grows to fit (ContentSizeFitter
+            // below) - a long channel name used to just overflow past NameText's own rect and
+            // visually collide with StatusText next to it instead of wrapping to a second line.
+            nameText.horizontalOverflow = HorizontalWrapMode.Wrap;
+            nameText.verticalOverflow = VerticalWrapMode.Overflow;
 
             // Fixed width, not flexible - "1小時59分後" needs to fit without pushing NameText
             // around from row to row; richText stays on Unity's Text default so
@@ -307,17 +369,51 @@ namespace Yobi.EditorTools
             statusText.alignment = TextAnchor.MiddleRight;
             statusText.fontSize = 11;
 
+            // A plain "+" icon button instead of a "加落追蹤" text label - small and square so it
+            // reads as an icon action rather than a second text label competing with NameText for
+            // the eye. MainSearchBarBehaviour swaps its label to "✓" on click instead of relabeling
+            // full words.
+            //
+            // Two-layer structure, not a single 28x28 Image+Button: the outer cell is what
+            // childControlHeight/ContentSizeFitter above stretch to match a taller (wrapped
+            // NameText) row, and fighting that stretch on the same object it's measured from
+            // doesn't hold up across rows - a plain fixed preferredHeight here still rendered
+            // visibly different square sizes row to row once the row itself grew taller than 30.
+            // Anchoring a separate fixed 28x28 "Visual" child at the cell's own center instead
+            // makes the square's actual size independent of however tall the outer cell ends up.
             var addButtonGo = new GameObject("AddButton", typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
             addButtonGo.transform.SetParent(row.transform, false);
-            addButtonGo.GetComponent<Image>().color = new Color(0.85f, 0.85f, 0.85f, 1f);
+            var addButtonHitArea = addButtonGo.GetComponent<Image>();
+            addButtonHitArea.color = new Color(1f, 1f, 1f, 0f);
+            addButtonGo.GetComponent<Button>().targetGraphic = addButtonHitArea;
             var addButtonLayout = addButtonGo.GetComponent<LayoutElement>();
-            addButtonLayout.preferredWidth = 90f;
-            addButtonLayout.preferredHeight = 26f;
+            addButtonLayout.preferredWidth = 28f;
+            addButtonLayout.minWidth = 28f;
 
-            var addButtonText = CreateText(addButtonGo.transform, "Text", "加落追蹤");
+            var addButtonVisual = new GameObject("Visual", typeof(RectTransform), typeof(Image));
+            addButtonVisual.transform.SetParent(addButtonGo.transform, false);
+            addButtonVisual.GetComponent<Image>().color = new Color(0.85f, 0.85f, 0.85f, 1f);
+            var visualRect = addButtonVisual.GetComponent<RectTransform>();
+            visualRect.anchorMin = new Vector2(0.5f, 0.5f);
+            visualRect.anchorMax = new Vector2(0.5f, 0.5f);
+            visualRect.pivot = new Vector2(0.5f, 0.5f);
+            visualRect.sizeDelta = new Vector2(28f, 28f);
+
+            var addButtonText = CreateText(addButtonVisual.transform, "Text", "+");
             addButtonText.color = Color.black;
+            addButtonText.fontSize = 16;
+            addButtonText.fontStyle = FontStyle.Bold;
             addButtonText.alignment = TextAnchor.MiddleCenter;
             SetupStretch(addButtonText.GetComponent<RectTransform>(), Vector2.zero, Vector2.zero);
+
+            // Row height now follows NameText's wrapped content instead of a fixed 30 - childControl
+            // Height (already true above) stretches StatusText/AddButton to match whatever that
+            // ends up being, and minHeight keeps a single-line row from getting any shorter than
+            // before.
+            row.GetComponent<LayoutElement>().preferredHeight = -1f;
+            row.GetComponent<LayoutElement>().minHeight = 30f;
+            var rowFitter = row.AddComponent<ContentSizeFitter>();
+            rowFitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
 
             row.SetActive(false);
             return row;
@@ -376,6 +472,8 @@ namespace Yobi.EditorTools
             MainSearchBarBehaviour behaviour,
             InputField inputField,
             Button searchIconButton,
+            Button aiModeToggleButton,
+            Image aiModeToggleBackground,
             Image backgroundImage,
             RectTransform resultsContainer,
             GameObject resultRowTemplate,
@@ -384,6 +482,8 @@ namespace Yobi.EditorTools
             var so = new SerializedObject(behaviour);
             so.FindProperty("searchInputField").objectReferenceValue = inputField;
             so.FindProperty("searchIconButton").objectReferenceValue = searchIconButton;
+            so.FindProperty("aiModeToggleButton").objectReferenceValue = aiModeToggleButton;
+            so.FindProperty("aiModeToggleBackground").objectReferenceValue = aiModeToggleBackground;
             so.FindProperty("backgroundImage").objectReferenceValue = backgroundImage;
             so.FindProperty("resultsContainer").objectReferenceValue = resultsContainer;
             so.FindProperty("resultRowTemplate").objectReferenceValue = resultRowTemplate;

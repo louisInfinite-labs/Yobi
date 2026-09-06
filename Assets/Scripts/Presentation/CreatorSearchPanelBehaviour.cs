@@ -246,18 +246,26 @@ namespace Yobi.Presentation
         // own (GetCreatorStatusUseCase is stateless per call).
         public async Task<CreatorStatus> GetCreatorStatusAsync(CreatorSearchResult result, CancellationToken cancellationToken)
         {
-            var isWatchlisted = false;
+            var identity = new ChannelIdentity(result.ChannelId, result.DisplayName);
+            return await _creatorStatusUseCase.GetStatusAsync(identity, IsWatchlisted(result.ChannelId), cancellationToken);
+        }
+
+        // Entry point for MainSearchBarBehaviour's search-result rows to show their true add
+        // state (a filled "✓", not "+") for a creator that's already watchlisted - a synchronous,
+        // no-network check against the same in-memory watchlist GetCreatorStatusAsync above reads,
+        // so a row can set its initial button state right when it's created rather than only ever
+        // reacting to a click made in the current session.
+        public bool IsWatchlisted(string channelId)
+        {
             foreach (var creator in _watchlistUseCase.GetAll())
             {
-                if (creator.ChannelId == result.ChannelId)
+                if (creator.ChannelId == channelId)
                 {
-                    isWatchlisted = true;
-                    break;
+                    return true;
                 }
             }
 
-            var identity = new ChannelIdentity(result.ChannelId, result.DisplayName);
-            return await _creatorStatusUseCase.GetStatusAsync(identity, isWatchlisted, cancellationToken);
+            return false;
         }
 
         // Entry point for MainSearchBarBehaviour's add-to-watchlist action. Routed through this
@@ -274,6 +282,19 @@ namespace Yobi.Presentation
             }
 
             return addResult;
+        }
+
+        // Entry point for RoomReminderListBehaviour's Follow List "✕" - same reasoning as
+        // AddToWatchlist above (this instance's in-memory _watchlistUseCase is what
+        // RunPollingLoop/RefreshWatchlistStatusAsync actually reads, so removal has to go through
+        // it too) plus an immediate refresh so the row disappears from both Live Status and Follow
+        // List right away instead of waiting for the next poll tick.
+        public void RemoveFromWatchlist(string channelId)
+        {
+            if (_watchlistUseCase.Remove(channelId))
+            {
+                _ = RefreshWatchlistStatusAsync();
+            }
         }
 
         private async void OnRefreshButtonClicked()

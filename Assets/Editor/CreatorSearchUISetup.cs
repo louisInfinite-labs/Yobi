@@ -15,7 +15,7 @@ namespace Yobi.EditorTools
         private static readonly Font UiFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
         [MenuItem("Tools/Yobi/Setup Creator Search UI")]
-        private static void SetupCreatorSearchUI()
+        internal static void SetupCreatorSearchUI()
         {
             // Runs unconditionally (even if the panel already exists) so re-running this command
             // after an update is enough to pick up a newly shared ReminderSettings asset on scenes
@@ -62,34 +62,38 @@ namespace Yobi.EditorTools
 
             // Only the tool-generated children (identified by their fixed names) are torn down
             // and rebuilt - anything else under the panel that the user added by hand is left alone.
+            // SearchRow/ResultsSection are stale names from before PR #18 replaced this panel's own
+            // manual search UI with MainSearchBarBehaviour - CreatorSearchPanelBehaviour no longer
+            // has searchInputField/searchButton/resultsContainer/resultRowTemplate fields to wire
+            // them into at all, so they are torn down (cleaning up any leftover from an older scene)
+            // but never rebuilt.
             DestroyGeneratedChild(panelGo.transform, "SearchRow");
-            DestroyGeneratedChild(panelGo.transform, "StatusText");
             DestroyGeneratedChild(panelGo.transform, "ResultsSection");
+            DestroyGeneratedChild(panelGo.transform, "StatusText");
             DestroyGeneratedChild(panelGo.transform, "WatchlistSection");
 
-            var searchRow = CreateHorizontalRow(panelGo.transform, "SearchRow");
-            var inputField = CreateInputField(searchRow.transform, "SearchInputField");
-            var searchButton = CreateButton(searchRow.transform, "SearchButton", "Search");
-
             var statusText = CreateText(panelGo.transform, "StatusText", string.Empty);
-
-            CreateSection(panelGo.transform, "ResultsSection", "Search Results", out _, out var resultsContainer);
-            var resultRowTemplate = CreateResultRowTemplate(resultsContainer);
 
             CreateSection(panelGo.transform, "WatchlistSection", "Temporary Watchlist", out var watchlistSection, out var watchlistContainer);
             var watchlistRowTemplate = CreateWatchlistRowTemplate(watchlistContainer);
             var refreshStatusButton = CreateButton(watchlistSection.transform, "RefreshStatusButton", "Refresh Status");
 
-            WireReferences(panelBehaviour, inputField, searchButton, refreshStatusButton, statusText, resultsContainer, resultRowTemplate, watchlistContainer, watchlistRowTemplate);
+            WireReferences(panelBehaviour, refreshStatusButton, statusText, watchlistContainer, watchlistRowTemplate);
             AssignReminderSettings(panelBehaviour, reminderSettings);
 
             EditorUtility.SetDirty(panelGo);
-            EditorSceneManager.MarkSceneDirty(EditorSceneManager.GetActiveScene());
+            var scene = EditorSceneManager.GetActiveScene();
+            EditorSceneManager.MarkSceneDirty(scene);
+            // Every other Setup*UI tool saves the scene itself rather than leaving it dirty - this
+            // one used to rely on whoever ran it remembering to hit Cmd+S afterwards, which silently
+            // drops the changes when run from batchmode (SetupAllUISetup, or a CI-style rebuild)
+            // since there's no one there to save manually before Unity quits.
+            var saved = EditorSceneManager.SaveScene(scene);
 
             Selection.activeGameObject = panelGo;
             Debug.Log(isNewPanel
-                ? "[CreatorSearchUISetup] Creator Search UI created (Canvas, panel, and all templates). Remember to save the scene."
-                : "[CreatorSearchUISetup] Creator Search UI templates rebuilt in place on the existing panel (SearchRow, StatusText, ResultsSection, WatchlistSection); Canvas and panel preserved. Remember to save the scene.");
+                ? $"[CreatorSearchUISetup] Creator Search UI created (Canvas, panel, and templates). SaveScene returned {saved}."
+                : $"[CreatorSearchUISetup] Creator Search UI templates rebuilt in place on the existing panel (StatusText, WatchlistSection); Canvas and panel preserved. SaveScene returned {saved}.");
         }
 
         private static GameObject EnsureCanvasByName()
@@ -220,58 +224,6 @@ namespace Yobi.EditorTools
             return panelGo;
         }
 
-        private static GameObject CreateHorizontalRow(Transform parent, string name)
-        {
-            var go = new GameObject(name, typeof(RectTransform), typeof(HorizontalLayoutGroup), typeof(LayoutElement));
-            go.transform.SetParent(parent, false);
-
-            var layout = go.GetComponent<HorizontalLayoutGroup>();
-            layout.spacing = 6f;
-            layout.childControlWidth = true;
-            layout.childControlHeight = true;
-            layout.childForceExpandWidth = false;
-            layout.childForceExpandHeight = true;
-
-            go.GetComponent<LayoutElement>().preferredHeight = 30f;
-
-            return go;
-        }
-
-        private static InputField CreateInputField(Transform parent, string name)
-        {
-            var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(InputField), typeof(LayoutElement));
-            go.transform.SetParent(parent, false);
-            go.GetComponent<Image>().color = Color.white;
-
-            var layoutElement = go.GetComponent<LayoutElement>();
-            layoutElement.flexibleWidth = 1f;
-            layoutElement.preferredHeight = 30f;
-
-            var textGo = new GameObject("Text", typeof(RectTransform), typeof(Text));
-            textGo.transform.SetParent(go.transform, false);
-            var text = textGo.GetComponent<Text>();
-            text.font = UiFont;
-            text.color = Color.black;
-            text.alignment = TextAnchor.MiddleLeft;
-            SetupStretch(textGo.GetComponent<RectTransform>(), new Vector2(8f, 6f), new Vector2(-8f, -6f));
-
-            var placeholderGo = new GameObject("Placeholder", typeof(RectTransform), typeof(Text));
-            placeholderGo.transform.SetParent(go.transform, false);
-            var placeholder = placeholderGo.GetComponent<Text>();
-            placeholder.font = UiFont;
-            placeholder.text = "Search creator name";
-            placeholder.color = new Color(0f, 0f, 0f, 0.4f);
-            placeholder.fontStyle = FontStyle.Italic;
-            placeholder.alignment = TextAnchor.MiddleLeft;
-            SetupStretch(placeholderGo.GetComponent<RectTransform>(), new Vector2(8f, 6f), new Vector2(-8f, -6f));
-
-            var inputField = go.GetComponent<InputField>();
-            inputField.textComponent = text;
-            inputField.placeholder = placeholder;
-
-            return inputField;
-        }
-
         private static Button CreateButton(Transform parent, string name, string label)
         {
             var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button), typeof(LayoutElement));
@@ -341,52 +293,6 @@ namespace Yobi.EditorTools
             container = containerGo.GetComponent<RectTransform>();
         }
 
-        private static GameObject CreateResultRowTemplate(RectTransform container)
-        {
-            // Row now has two parts: a fixed-height HeaderRow (name + Status + Add buttons) and a
-            // StatusText below it that only fills in once "Status" is checked for that specific
-            // result - so the row must grow to fit, same pattern as the watchlist row template.
-            var rowGo = new GameObject("ResultRowTemplate", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-            rowGo.transform.SetParent(container, false);
-
-            var rowLayout = rowGo.GetComponent<VerticalLayoutGroup>();
-            rowLayout.spacing = 2f;
-            rowLayout.childControlWidth = true;
-            rowLayout.childControlHeight = true;
-            rowLayout.childForceExpandWidth = true;
-            rowLayout.childForceExpandHeight = false;
-            rowGo.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-
-            var headerRow = CreateHorizontalRow(rowGo.transform, "HeaderRow");
-
-            var nameGo = new GameObject("NameText", typeof(RectTransform), typeof(Text), typeof(LayoutElement));
-            nameGo.transform.SetParent(headerRow.transform, false);
-            var nameText = nameGo.GetComponent<Text>();
-            nameText.font = UiFont;
-            nameText.color = Color.white;
-            nameText.alignment = TextAnchor.MiddleLeft;
-            nameGo.GetComponent<LayoutElement>().flexibleWidth = 1f;
-
-            var checkStatusButton = CreateButton(headerRow.transform, "CheckStatusButton", "Status");
-            checkStatusButton.GetComponent<LayoutElement>().preferredWidth = 60f;
-
-            var addButton = CreateButton(headerRow.transform, "AddButton", "Add");
-            addButton.GetComponent<LayoutElement>().preferredWidth = 60f;
-
-            var statusGo = new GameObject("StatusText", typeof(RectTransform), typeof(Text), typeof(LayoutElement));
-            statusGo.transform.SetParent(rowGo.transform, false);
-            var resultStatusText = statusGo.GetComponent<Text>();
-            resultStatusText.font = UiFont;
-            resultStatusText.color = new Color(1f, 1f, 1f, 0.85f);
-            resultStatusText.alignment = TextAnchor.UpperLeft;
-            resultStatusText.horizontalOverflow = HorizontalWrapMode.Wrap;
-            resultStatusText.verticalOverflow = VerticalWrapMode.Overflow;
-            resultStatusText.fontSize = 12;
-
-            rowGo.SetActive(false);
-            return rowGo;
-        }
-
         private static GameObject CreateWatchlistRowTemplate(RectTransform container)
         {
             // Watchlist rows now show multi-line status text (channel, URL, LIVE/UPCOMING/NONE,
@@ -426,22 +332,14 @@ namespace Yobi.EditorTools
 
         private static void WireReferences(
             CreatorSearchPanelBehaviour panel,
-            InputField inputField,
-            Button searchButton,
             Button refreshStatusButton,
             Text statusText,
-            RectTransform resultsContainer,
-            GameObject resultRowTemplate,
             RectTransform watchlistContainer,
             GameObject watchlistRowTemplate)
         {
             var so = new SerializedObject(panel);
-            so.FindProperty("searchInputField").objectReferenceValue = inputField;
-            so.FindProperty("searchButton").objectReferenceValue = searchButton;
             so.FindProperty("refreshStatusButton").objectReferenceValue = refreshStatusButton;
             so.FindProperty("statusText").objectReferenceValue = statusText;
-            so.FindProperty("resultsContainer").objectReferenceValue = resultsContainer;
-            so.FindProperty("resultRowTemplate").objectReferenceValue = resultRowTemplate;
             so.FindProperty("watchlistContainer").objectReferenceValue = watchlistContainer;
             so.FindProperty("watchlistRowTemplate").objectReferenceValue = watchlistRowTemplate;
             so.ApplyModifiedPropertiesWithoutUndo();
