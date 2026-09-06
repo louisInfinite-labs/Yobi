@@ -99,6 +99,7 @@ namespace Yobi.Presentation
             SetupResolutionOptions();
             SetupLanguageOptions();
             ApplyLoadedStateToControls();
+            ApplyLoadedDisplaySettingsToScreen();
 
             if (openButton != null)
             {
@@ -292,6 +293,27 @@ namespace Yobi.Presentation
             }
 
             _isApplyingLoadedState = false;
+        }
+
+        // ApplyLoadedStateToControls only updates the Toggle/Dropdown visuals - it deliberately
+        // runs its updates under _isApplyingLoadedState so OnFullscreenToggled/OnResolutionChanged
+        // don't fire (and re-persist) while it's populating them from what was just loaded. But
+        // that means a fresh launch never actually reapplies a saved Fullscreen=true or a non-
+        // default resolution to the real window - the modal would just show the right values
+        // without the app looking like it. This calls the same Screen APIs those two handlers
+        // use, once, directly, so persisted display settings take effect on startup too.
+        private void ApplyLoadedDisplaySettingsToScreen()
+        {
+            Screen.fullScreen = _settings.Fullscreen;
+
+            if (_availableResolutions == null || _availableResolutions.Count == 0)
+            {
+                return;
+            }
+
+            var index = _availableResolutions.FindIndex(r => r.width == _settings.ResolutionWidth && r.height == _settings.ResolutionHeight);
+            var resolution = _availableResolutions[index >= 0 ? index : 0];
+            Screen.SetResolution(resolution.width, resolution.height, Screen.fullScreenMode);
         }
 
         private void OnFullscreenToggled(bool isFullscreen)

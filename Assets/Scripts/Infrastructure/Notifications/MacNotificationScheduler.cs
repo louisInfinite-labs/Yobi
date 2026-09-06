@@ -26,6 +26,9 @@ namespace Yobi.Infrastructure.Notifications
         private static extern void Yobi_CancelNotification(string identifier);
 
         [DllImport(PluginName)]
+        private static extern void Yobi_CancelAllNotifications();
+
+        [DllImport(PluginName)]
         private static extern void Yobi_SetClickCallback(ClickCallback callback);
 
         // The Url travels with the OS-persisted notification request itself (native side stores
@@ -66,6 +69,12 @@ namespace Yobi.Infrastructure.Notifications
         {
             Debug.Log($"[MacNotificationScheduler] Cancelled '{id}'");
             Yobi_CancelNotification(id);
+        }
+
+        public void CancelAll()
+        {
+            Debug.Log("[MacNotificationScheduler] Cancelled all pending/delivered notifications");
+            Yobi_CancelAllNotifications();
         }
 
         // The native click callback can arrive off Unity's main thread, and opening a URL uses

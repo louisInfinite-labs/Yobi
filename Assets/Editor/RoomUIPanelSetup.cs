@@ -209,10 +209,20 @@ namespace Yobi.EditorTools
                 // Destroy every existing child rather than a fixed set of names: an older
                 // version of this tool created flat "SearchButton"/"WallpaperButton"/etc.
                 // children with no "...Container" wrapper, so a name-based cleanup here would
-                // leave those orphaned alongside the newly (re)created ones.
+                // leave those orphaned alongside the newly (re)created ones. "SettingsButtonContainer"
+                // is the one deliberate exception - it's added to this same dock by
+                // SettingsModalUISetup.EnsureSettingsButtonInDock, not by this method, which only
+                // (re)creates Search/AI/Mode below; destroying it here would remove the Settings
+                // modal's only entry point until someone reruns that other tool.
                 for (var i = dockGo.transform.childCount - 1; i >= 0; i--)
                 {
-                    Object.DestroyImmediate(dockGo.transform.GetChild(i).gameObject);
+                    var child = dockGo.transform.GetChild(i);
+                    if (child.name == "SettingsButtonContainer")
+                    {
+                        continue;
+                    }
+
+                    Object.DestroyImmediate(child.gameObject);
                 }
             }
             else

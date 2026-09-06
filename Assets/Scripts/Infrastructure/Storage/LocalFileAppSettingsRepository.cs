@@ -59,6 +59,17 @@ namespace Yobi.Infrastructure.Storage
                 return defaultSettings;
             }
 
+            if (dto.resolutionWidth <= 0 || dto.resolutionHeight <= 0)
+            {
+                // A complete-but-corrupt file (hand-edited, or written by a future/older buggy
+                // version) could otherwise pass the missing-field check above yet still leave
+                // AppSettings holding a resolution nothing can use - reject it the same way as a
+                // missing field rather than accepting values the Display tab can never open with.
+                Debug.LogError($"[LocalFileAppSettingsRepository] {_filePath} has a non-positive resolution ({dto.resolutionWidth}x{dto.resolutionHeight}), falling back to defaults.");
+                QuarantineCorruptFile();
+                return defaultSettings;
+            }
+
             return new AppSettings(dto.languageCode, dto.resolutionWidth, dto.resolutionHeight, dto.fullscreen, dto.soundMuted, dto.soundVolume, dto.notificationsEnabled);
         }
 
@@ -77,14 +88,37 @@ namespace Yobi.Infrastructure.Storage
             var json = JsonUtility.ToJson(dto, prettyPrint: true);
 
             var tempPath = _filePath + ".tmp";
-            File.WriteAllText(tempPath, json);
-            if (File.Exists(_filePath))
+            try
             {
-                File.Replace(tempPath, _filePath, null);
+                File.WriteAllText(tempPath, json);
+                if (File.Exists(_filePath))
+                {
+                    File.Replace(tempPath, _filePath, null);
+                }
+                else
+                {
+                    File.Move(tempPath, _filePath);
+                }
             }
-            else
+            catch (Exception ex)
             {
-                File.Move(tempPath, _filePath);
+                // Must not propagate: Load() calls Save(defaultSettings) to seed a first-run
+                // file, and SettingsModalBehaviour.Persist() calls this on every settings change
+                // from a UI event handler - an unguarded disk-full/permissions failure here would
+                // otherwise crash Awake() or throw out of that handler instead of just failing to
+                // persist this one write.
+                Debug.LogError($"[LocalFileAppSettingsRepository] Failed to write {_filePath}: {ex.Message}");
+                try
+                {
+                    if (File.Exists(tempPath))
+                    {
+                        File.Delete(tempPath);
+                    }
+                }
+                catch (Exception)
+                {
+                    // Best-effort cleanup.
+                }
             }
         }
 

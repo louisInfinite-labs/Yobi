@@ -116,3 +116,15 @@ void Yobi_CancelNotification(const char *identifier)
     [center removePendingNotificationRequestsWithIdentifiers:@[ nsIdentifier ]];
     [center removeDeliveredNotificationsWithIdentifiers:@[ nsIdentifier ]];
 }
+
+// Everything Yobi has ever scheduled is pending/delivered under this same notification center -
+// the app doesn't share it with anything else - so "all" here means "all of Yobi's", not just
+// the ones SyncScheduledRemindersUseCase currently happens to know about in memory. Needed for
+// turning notifications off in Settings: that in-memory schedule is per-launch, so it can't be
+// used to Cancel() individually anything that was scheduled in a previous session.
+void Yobi_CancelAllNotifications(void)
+{
+    UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
+    [center removeAllPendingNotificationRequests];
+    [center removeAllDeliveredNotifications];
+}
