@@ -27,22 +27,10 @@ namespace Yobi.Presentation
         public event Action<IReadOnlyList<CreatorStatus>> WatchlistStatusUpdated;
 
         [SerializeField]
-        private InputField searchInputField;
-
-        [SerializeField]
-        private Button searchButton;
-
-        [SerializeField]
         private Button refreshStatusButton;
 
         [SerializeField]
         private Text statusText;
-
-        [SerializeField]
-        private RectTransform resultsContainer;
-
-        [SerializeField]
-        private GameObject resultRowTemplate;
 
         [SerializeField]
         private RectTransform watchlistContainer;
@@ -86,7 +74,6 @@ namespace Yobi.Presentation
         // poll Holodex - the reminder check never itself performs a network call.
         private IReadOnlyList<ChannelLivestreamResult> _latestReminderSnapshot = new List<ChannelLivestreamResult>();
 
-        private readonly List<GameObject> _activeResultRows = new List<GameObject>();
         private readonly List<GameObject> _activeWatchlistRows = new List<GameObject>();
 
         private void OnValidate()
@@ -99,21 +86,31 @@ namespace Yobi.Presentation
 
         private void Awake()
         {
-            if (searchInputField == null || searchButton == null || refreshStatusButton == null || resultsContainer == null ||
-                resultRowTemplate == null || watchlistContainer == null || watchlistRowTemplate == null)
+            if (refreshStatusButton == null || watchlistContainer == null || watchlistRowTemplate == null)
             {
                 Debug.LogError("[CreatorSearchPanel] Required UI references are not assigned. Run Tools > Yobi > Setup Creator Search UI.");
-            }
-
-            if (resultRowTemplate != null)
-            {
-                resultRowTemplate.SetActive(false);
             }
 
             if (watchlistRowTemplate != null)
             {
                 watchlistRowTemplate.SetActive(false);
             }
+
+            // This panel no longer has an on-screen toggle button (its manual search UI was
+            // replaced by MainSearchBarBehaviour) - nothing outside this class hides it anymore,
+            // so it hides itself permanently here. Still a CanvasGroup, never SetActive(false):
+            // deactivating the GameObject would stop this script's own Start()/coroutines (the
+            // watchlist poll + reminder loops below) and make it invisible to other scripts'
+            // FindFirstObjectByType lookups (e.g. RoomReminderListBehaviour, MainSearchBarBehaviour).
+            var canvasGroup = gameObject.GetComponent<CanvasGroup>();
+            if (canvasGroup == null)
+            {
+                canvasGroup = gameObject.AddComponent<CanvasGroup>();
+            }
+
+            canvasGroup.alpha = 0f;
+            canvasGroup.interactable = false;
+            canvasGroup.blocksRaycasts = false;
 
             _watchlistUseCase = new ManageWatchlistUseCase(new LocalFileWatchlistRepository());
             _reminderUseCase = new EvaluateLivestreamRemindersUseCase();
@@ -162,13 +159,7 @@ namespace Yobi.Presentation
             {
                 Debug.LogError($"[CreatorSearchPanel] Failed to load Holodex configuration: {ex.Message}");
                 SetStatus("Search unavailable: configuration error.");
-                SetSearchInteractable(false);
                 return;
-            }
-
-            if (searchButton != null)
-            {
-                searchButton.onClick.AddListener(OnSearchButtonClicked);
             }
 
             if (refreshStatusButton != null)
@@ -225,149 +216,30 @@ namespace Yobi.Presentation
             }
         }
 
-        private async void OnSearchButtonClicked()
+        // Entry point for MainSearchBarBehaviour's search-first intent routing. Exposed here
+        // (rather than letting the bar construct its own SearchCreatorsUseCase) purely for
+        // symmetry with AddToWatchlist below - this one has no shared-state hazard of its own,
+        // but keeping both entry points on the same class keeps the "who owns Holodex access"
+        // story in one place.
+        public Task<IReadOnlyList<CreatorSearchResult>> SearchCreatorsAsync(string query, CancellationToken cancellationToken)
         {
-            var query = searchInputField != null ? searchInputField.text : string.Empty;
-
-            SetSearchInteractable(false);
-            SetStatus(string.Empty);
-            ClearResultRows();
-
-            try
-            {
-                var results = await _searchCreatorsUseCase.SearchAsync(query, CancellationToken.None);
-
-                if (results.Count == 0)
-                {
-                    SetStatus("No matching creators found.");
-                }
-                else
-                {
-                    foreach (var result in results)
-                    {
-                        CreateResultRow(result);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                SetStatus("Search failed.");
-                Debug.LogError($"[Holodex] Creator search failed: {ex.Message}");
-            }
-            finally
-            {
-                SetSearchInteractable(true);
-            }
+            return _searchCreatorsUseCase.SearchAsync(query, cancellationToken);
         }
 
-        private void SetSearchInteractable(bool interactable)
-        {
-            if (searchButton != null)
-            {
-                searchButton.interactable = interactable;
-            }
-        }
-
-        private void CreateResultRow(CreatorSearchResult result)
-        {
-            if (resultRowTemplate == null || resultsContainer == null)
-            {
-                return;
-            }
-
-            var row = Instantiate(resultRowTemplate, resultsContainer);
-            row.SetActive(true);
-
-            var nameText = row.transform.Find("HeaderRow/NameText")?.GetComponent<Text>();
-            if (nameText != null)
-            {
-                nameText.text = $"{result.DisplayName}  ({result.ChannelId})";
-            }
-
-            var resultStatusText = row.transform.Find("StatusText")?.GetComponent<Text>();
-
-            var checkStatusButton = row.transform.Find("HeaderRow/CheckStatusButton")?.GetComponent<Button>();
-            if (checkStatusButton != null)
-            {
-                checkStatusButton.onClick.RemoveAllListeners();
-                checkStatusButton.onClick.AddListener(() => OnCheckResultStatusClicked(result, checkStatusButton, resultStatusText));
-            }
-
-            var addButton = row.transform.Find("HeaderRow/AddButton")?.GetComponent<Button>();
-            if (addButton != null)
-            {
-                addButton.onClick.RemoveAllListeners();
-                addButton.onClick.AddListener(() => OnAddButtonClicked(result));
-            }
-
-            _activeResultRows.Add(row);
-        }
-
-        // Status lookup works for ANY channel identity, regardless of watchlist membership -
-        // this is the same use case the watchlist refresh below uses, just for a single
-        // not-yet-added search result instead of the whole watchlist.
-        private async void OnCheckResultStatusClicked(CreatorSearchResult result, Button checkStatusButton, Text resultStatusText)
-        {
-            if (checkStatusButton != null)
-            {
-                checkStatusButton.interactable = false;
-            }
-
-            try
-            {
-                var identity = new ChannelIdentity(result.ChannelId, result.DisplayName);
-                var isWatchlisted = IsChannelWatchlisted(result.ChannelId);
-                var status = await _creatorStatusUseCase.GetStatusAsync(identity, isWatchlisted, CancellationToken.None);
-
-                if (resultStatusText != null)
-                {
-                    resultStatusText.text = FormatCreatorStatus(status);
-                }
-
-                LogCreatorStatus(status);
-            }
-            catch (Exception ex)
-            {
-                if (resultStatusText != null)
-                {
-                    resultStatusText.text = "Status check failed.";
-                }
-
-                Debug.LogError($"[Holodex] Failed to check creator status: {ex.Message}");
-            }
-            finally
-            {
-                if (checkStatusButton != null)
-                {
-                    checkStatusButton.interactable = true;
-                }
-            }
-        }
-
-        private bool IsChannelWatchlisted(string channelId)
-        {
-            foreach (var creator in _watchlistUseCase.GetAll())
-            {
-                if (creator.ChannelId == channelId)
-                {
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        private async void OnAddButtonClicked(CreatorSearchResult result)
+        // Entry point for MainSearchBarBehaviour's add-to-watchlist action. Routed through this
+        // instance specifically (rather than the bar constructing its own ManageWatchlistUseCase)
+        // because _watchlistUseCase is loaded once into memory and never reloaded from disk - a
+        // second independent instance would leave RunPollingLoop's in-memory copy unaware of
+        // anything added here until the next app restart, silently breaking reminders for it.
+        public WatchlistAddResult AddToWatchlist(CreatorSearchResult result)
         {
             var addResult = _watchlistUseCase.Add(result.ChannelId, result.DisplayName, result.ChannelUrl);
-            if (addResult == WatchlistAddResult.AlreadyExists)
+            if (addResult == WatchlistAddResult.Added)
             {
-                SetStatus("Already added");
-                return;
+                _ = RefreshWatchlistStatusAsync();
             }
 
-            SetStatus(string.Empty);
-            await RefreshWatchlistStatusAsync();
+            return addResult;
         }
 
         private async void OnRefreshButtonClicked()
@@ -576,16 +448,6 @@ namespace Yobi.Presentation
             var localStart = reminderEvent.ScheduledStartUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
             var leadMinutes = (int)reminderEvent.Threshold.LeadTime.TotalMinutes;
             Debug.Log($"[Reminder]\nChannel: {reminderEvent.ChannelName}\nTitle: {reminderEvent.Title}\n{reminderEvent.Threshold.Label}: {leadMinutes} minutes before start\nScheduled Start: {localStart}\nVideo ID: {reminderEvent.VideoId}");
-        }
-
-        private void ClearResultRows()
-        {
-            foreach (var row in _activeResultRows)
-            {
-                Destroy(row);
-            }
-
-            _activeResultRows.Clear();
         }
 
         private void ClearWatchlistRows()
